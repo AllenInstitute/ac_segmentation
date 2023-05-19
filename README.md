@@ -20,3 +20,11 @@ Automated segmentation of axons. This project is built on previous projects.
 Original github repositories: 
 - [Neurotorch](https://github.com/jgornet/NeuroTorch)
 - [DeepEM](https://github.com/seung-lab/DeepEM)
+
+### Installation
+
+first create an environment and install numpy and scikit-build (some external dependencies require these for building)
+`conda create -n ac_seg numpy scikit-build`
+
+Then in the top level of this directory install with:
+`pip install .`
