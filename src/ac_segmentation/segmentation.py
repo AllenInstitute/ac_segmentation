@@ -53,6 +53,41 @@ def predict(checkpoint, outdir, chunk_size, overlap, mip=0):
             tif.imsave(os.path.join(mips_dir, 'MAX_xy_chunk%02d.tif'%n), np.uint8(255*mip_xy)) 
     return num_chunks
     
+def predict_array(checkpoint, outdir, inarr, mip=0):
+    
+    #set iteration size and stride
+    inarr_it_size = BoundingBox(Vector(0, 0, 0), Vector(128, 128, 32))
+    inarr_stride = Vector(64, 64, 16)
+    
+    #set array object
+    inarr = Array(inarr, iteration_size=inarr_it_size, stride=inarr_stride)
+    
+    savedir = os.path.join(outdir, 'Segmentation')
+    if not os.path.isdir(savedir):
+        os.mkdir(savedir)
+    mips_dir = os.path.join(outdir, 'Segmentation', 'mips')   
+    if not os.path.isdir(mips_dir):
+        os.mkdir(mips_dir)
+        
+    # Initialize the U-Net architecture
+    net = RSUNet()
+    
+    # Predict
+    predictor = Predictor(net, checkpoint) 
+    output_volume = Array(-np.inf*np.ones(inarr.getBoundingBox().getNumpyDim(), dtype=np.float32))
+    predictor.run(inarr, output_volume, batch_size=20)
+    
+    # Convert to probability map and save
+    probability_map = 1/(1+np.exp(-output_volume.getArray()))
+    chunkdir = os.path.join(savedir, 'chunked')
+    
+    if not os.path.isdir(chunkdir):
+        os.mkdir(chunkdir)
+    for i in range(probability_map.shape[0]):# save 8-bit version as multiple tif files
+        tif.imsave(os.path.join(chunkdir,'%03d.tif'%i), np.uint8(255*probability_map[i,:,:]))          
+    mip_xy = np.max(probability_map,0) # save mip
+    tif.imsave(os.path.join(mips_dir, 'MAX_xy_chunk.tif'), np.uint8(255*mip_xy)) 
+    
 def load_stack_select(dirname, idx1, idx2):
     # Load image stack filenames
     filelist = [f for f in os.listdir(dirname) if f.endswith('.tif')] 

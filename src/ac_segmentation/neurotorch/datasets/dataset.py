@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset as _Dataset
 import numpy as np
 from abc import abstractmethod
-from neurotorch.datasets.datatypes import BoundingBox, Vector
+from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
 from numbers import Number
 from numpy import ndarray
 from scipy.spatial import KDTree
@@ -312,7 +312,7 @@ origin
             raise StopIteration
 
         element_vec = np.unravel_index(idx,
-                                       dims=self.element_vec.getComponents())
+                                       shape=self.element_vec.getComponents())
 
         element_vec = Vector(*element_vec)
         bounding_box = self.iteration_size+self.stride*element_vec
@@ -717,7 +717,7 @@ class PooledVolume(Volume):
         _idx = idx-self.volume_index[index]
 
         element_vec = np.unravel_index(_idx,
-                                       dims=volume.element_vec.getComponents())
+                                       shape=volume.element_vec.getComponents())
 
         element_vec = Vector(*element_vec)
         bounding_box = volume.iteration_size+volume.stride*element_vec \

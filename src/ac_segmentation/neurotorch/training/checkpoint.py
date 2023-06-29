@@ -1,4 +1,4 @@
-from neurotorch.core.trainer import TrainerDecorator
+from ac_segmentation.neurotorch.core.trainer import TrainerDecorator
 import torch
 import os.path
 

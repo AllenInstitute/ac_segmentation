@@ -1,7 +1,7 @@
 import torch
 from torch.autograd import Variable
 import numpy as np
-from neurotorch.datasets.dataset import Data
+from ac_segmentation.neurotorch.datasets.dataset import Data
 
 
 class Predictor:
@@ -56,7 +56,7 @@ class Predictor:
             output_volume.blend(data)
 
     def toArray(self, data):
-        torch_data = data.getArray().astype(np.float)
+        torch_data = data.getArray().astype(float)
         torch_data = torch_data.reshape(1, 1, *torch_data.shape)
         return torch_data
 

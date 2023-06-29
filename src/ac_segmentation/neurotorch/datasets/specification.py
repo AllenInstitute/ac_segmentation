@@ -1,6 +1,6 @@
-from neurotorch.datasets.dataset import (AlignedVolume, Array, PooledVolume)
-from neurotorch.datasets.filetypes import (TiffVolume, Hdf5Volume)
-from neurotorch.datasets.datatypes import (BoundingBox, Vector)
+from ac_segmentation.neurotorch.datasets.dataset import (AlignedVolume, Array, PooledVolume)
+from ac_segmentation.neurotorch.datasets.filetypes import (TiffVolume, Hdf5Volume)
+from ac_segmentation.neurotorch.datasets.datatypes import (BoundingBox, Vector)
 from abc import (ABC, abstractmethod)
 import json
 import os

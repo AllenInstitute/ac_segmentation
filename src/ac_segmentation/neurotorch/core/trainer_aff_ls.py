@@ -3,8 +3,8 @@ import torch.optim as optim
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from neurotorch.loss.affinity import AffinityLoss
-from neurotorch.utils import torch_utils
+from ac_segmentation.neurotorch.loss.affinity import AffinityLoss
+from ac_segmentation.neurotorch.utils import torch_utils
 import torch.cuda
 import numpy as np
 import os

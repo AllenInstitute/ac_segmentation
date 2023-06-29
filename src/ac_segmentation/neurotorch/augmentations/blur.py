@@ -1,5 +1,5 @@
-from neurotorch.augmentations.augmentation import Augmentation
-from neurotorch.datasets.dataset import Data
+from ac_segmentation.neurotorch.augmentations.augmentation import Augmentation
+from ac_segmentation.neurotorch.datasets.dataset import Data
 from scipy.ndimage.filters import gaussian_filter
 from numpy.random import normal
 from scipy.ndimage.filters import median_filter

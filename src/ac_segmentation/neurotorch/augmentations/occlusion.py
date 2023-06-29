@@ -1,5 +1,5 @@
-from neurotorch.augmentations.augmentation import Augmentation
-from neurotorch.datasets.dataset import Data
+from ac_segmentation.neurotorch.augmentations.augmentation import Augmentation
+from ac_segmentation.neurotorch.datasets.dataset import Data
 import random
 import numpy as np
 from scipy.sparse import dok_matrix

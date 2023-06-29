@@ -3,7 +3,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from neurotorch.utils import torch_utils
+from ac_segmentation.neurotorch.utils import torch_utils
 
 class EdgeSampler(object):
     def __init__(self, edges):

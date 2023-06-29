@@ -1,5 +1,5 @@
-from neurotorch.datasets.dataset import Volume, Array, Data
-from neurotorch.datasets.datatypes import BoundingBox, Vector
+from ac_segmentation.neurotorch.datasets.dataset import Volume, Array, Data
+from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
 from abc import abstractmethod
 import fnmatch
 import os.path

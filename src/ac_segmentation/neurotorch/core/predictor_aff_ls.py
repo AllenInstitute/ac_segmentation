@@ -1,7 +1,7 @@
 import torch
 from torch.autograd import Variable
 import numpy as np
-from neurotorch.datasets.dataset import Data
+from ac_segmentation.neurotorch.datasets.dataset import Data
 
 
 class Predictor:

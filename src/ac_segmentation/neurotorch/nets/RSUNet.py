@@ -14,8 +14,8 @@ Kisuk Lee <kisuklee@mit.edu>, 2017
 
 from torch import nn
 from torch.nn import functional as F
-import neurotorch.nets.layers as layers
-from neurotorch.nets.netcollector import NetCollector
+import ac_segmentation.neurotorch.nets.layers as layers
+from ac_segmentation.neurotorch.nets.netcollector import NetCollector
 from collections import OrderedDict
 
 

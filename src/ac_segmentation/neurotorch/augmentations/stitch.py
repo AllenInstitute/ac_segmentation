@@ -1,6 +1,6 @@
-from neurotorch.augmentations.augmentation import Augmentation
-from neurotorch.datasets.dataset import Data
-from neurotorch.datasets.datatypes import Vector, BoundingBox
+from ac_segmentation.neurotorch.augmentations.augmentation import Augmentation
+from ac_segmentation.neurotorch.datasets.dataset import Data
+from ac_segmentation.neurotorch.datasets.datatypes import Vector, BoundingBox
 import random
 import numpy as np
 
