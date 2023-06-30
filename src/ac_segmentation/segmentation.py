@@ -4,11 +4,11 @@ import pandas as pd
 import argschema as ags
 import json
 import tifffile as tif
-from neurotorch.nets.RSUNet import RSUNet
-from neurotorch.core.predictor import Predictor
-from neurotorch.datasets.filetypes import TiffVolume
-from neurotorch.datasets.dataset import Array
-from neurotorch.datasets.datatypes import (BoundingBox, Vector)
+from ac_segmentation.neurotorch.nets.RSUNet import RSUNet
+from ac_segmentation.neurotorch.core.predictor import Predictor
+from ac_segmentation.neurotorch.datasets.filetypes import TiffVolume
+from ac_segmentation.neurotorch.datasets.dataset import Array
+from ac_segmentation.neurotorch.datasets.datatypes import (BoundingBox, Vector)
 
 class SegmentationParameters(ags.ArgSchema):
     ckpt = ags.fields.InputFile(required=True, description='Model file')
