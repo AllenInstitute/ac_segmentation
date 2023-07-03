@@ -8,14 +8,14 @@ from joblib import dump, load
 import copy
 from sklearn.neighbors import KDTree
 from scipy.spatial.distance import euclidean
-from neuron_morphology.morphology import Morphology
-from neuron_morphology.swc_io import morphology_from_swc, morphology_to_swc
+from ac_segmentation.swc_morphology.classes import Morphology
+from ac_segmentation.swc_morphology.readwrite_swc import morphology_from_swc, morphology_to_swc
 
 class ReconnectParameters(ags.ArgSchema):
     input_file = ags.fields.InputFile(required=True, description='Input file')
     output_dir = ags.fields.OutputDir(required=True, description='Output directory')
     model_dir = ags.fields.InputDir(required=True, description = 'Model directory')
-    pxl_xyz = ags.fields.NumpyArray(dtype=np.float, required=False, 
+    pxl_xyz = ags.fields.NumpyArray(dtype=float, required=False, 
                            default=[0.812,0.812,0.704], description='pxl size in um')
 
 def reconnect(infile, swc_outdir, modeldir, xyz_pxl): 

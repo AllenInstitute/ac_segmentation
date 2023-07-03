@@ -10,8 +10,8 @@ from scipy import ndimage as ndi
 from skimage.morphology import remove_small_objects, skeletonize_3d
 from sklearn.neighbors import KDTree
 import tifffile as tif
-from neuron_morphology.morphology import Morphology
-from neuron_morphology.swc_io import morphology_from_swc, morphology_to_swc
+from ac_segmentation.swc_morphology.classes import Morphology
+from ac_segmentation.swc_morphology.readwrite_swc import morphology_from_swc, morphology_to_swc
 
 class AddRadiusParameters(ags.ArgSchema):
     input_file = ags.fields.InputFile(required=True, description='Input file')
