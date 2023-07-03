@@ -39,7 +39,6 @@ from typing import Sequence, Dict
 from statistics import mean
 import functools
 from six import iteritems
-from allensdk.core.simple_tree import SimpleTree
 import numpy as np
 import copy
 import queue
@@ -59,162 +58,6 @@ CUT_DENDRITE = 10
 NO_RECONSTRUCTION = 20
 TYPE_30 = 30
 SPACING = [.1144, .1144, .28]
-
-
-class Morphology(SimpleTree):
-
-    def __init__(self, nodes, node_id_cb, parent_id_cb):
-
-        self._nodes = {node_id_cb(n): n for n in nodes}
-        self._parent_id_cb = lambda node: parent_id_cb(node) if parent_id_cb(node) in self._nodes else None
-        self._parent_ids = {nid: self._parent_id_cb(n) for nid, n in iteritems(self._nodes)}
-        self._child_ids = {nid: [] for nid in self._nodes}
-        self.compartments_for_nodes = {}
-
-        for nid in self._parent_ids:
-            pid = self._parent_ids[nid]
-            if pid is not None:
-                self._child_ids[pid].append(nid)
-
-        self.node_id_cb = node_id_cb
-        self.parent_id_cb = self._parent_id_cb
-        self.nodes_by_types = {}
-        self._create_compartment_dictionary()
-        self.compartments = self.get_compartments()
-
-    def get_tree_list(self):
-        tree_list = []
-        tree_roots = self.get_roots()
-        for tree_root in tree_roots:
-            tree = []
-            tree_queue = queue.Queue()
-            tree_queue.put(tree_root)
-            while not tree_queue.empty():
-                root = tree_queue.get()
-                tree.append(root)
-                children = self.children_of(root)
-                if children:
-                    for child in children:
-                        tree_queue.put(child)
-            tree_list.append(tree)
-        return tree_list
-
-
-    def get_children_of_node_by_types(self, node, node_types):
-        children = self.children_of(node)
-        children_by_types = []
-        for child in children:
-            if child['type'] in node_types:
-                children_by_types.append(child)
-        return children_by_types
-
-    def get_children(self, node, node_types=None):
-        if node_types:
-            return self.get_children_of_node_by_types(node, node_types)
-        else:
-            return self.children_of(node)
-
-
-    def get_branching_nodes(self, node_types=None):
-        if not node_types:
-            nodes = self.get_non_soma_nodes()
-        else:
-            nodes = self.get_node_by_types(node_types)
-
-        branching_nodes = []
-        for node in nodes:
-            if len(self.get_children(node)) > 1:
-                branching_nodes.append(node)
-
-        return branching_nodes
-
-
-    def children_of(self, node):
-        if node:
-            children = self.children([node['id']])
-            if children:
-                return children[0]
-        return None
-
-    def node_by_id(self, node_id):
-        return self._nodes[node_id]
-
-
-    def get_roots(self):
-        return self.filter_nodes(lambda node: self.parent_id_cb(node) is None)
-
-    def get_root_id(self):
-        return self.node_id_cb(self.get_root())
-
-    def get_roots_for_nodes(self, nodes):
-        tree_roots = []
-        for node in nodes:
-            if self.parent_of(node) not in nodes:
-                tree_roots.append(node)
-        return tree_roots
-
-
-    def parent_of(self, node):
-        if node:
-            parent = self.parents([node['id']])
-            if parent:
-                return parent[0]
-        return None
-
-
-    def get_leaf_nodes(self, node_types=None):
-        if not node_types:
-            nodes = self.get_non_soma_nodes()
-        else:
-            nodes = self.get_node_by_types(node_types)
-
-        leaf_nodes = []
-        for node in nodes:
-            if not self.get_children(node):
-                leaf_nodes.append(node)
-
-    def get_non_soma_nodes(self):
-        return self.filter_nodes(lambda node: node['type'] != SOMA)
-
-
-    def get_node_by_types(self, node_types=None):
-        if node_types:
-            node_by_types = []
-            for node_type in node_types:
-                if node_type not in self.nodes_by_types:
-                    self.nodes_by_types[node_type] = self.filter_nodes(lambda node: node['type'] == node_type)
-                node_by_types += self.nodes_by_types[node_type]
-            return node_by_types
-        else:
-            return self.nodes()
-
-    def _create_compartment_dictionary(self):
-
-        nodes = self.nodes()
-        for node in nodes:
-            parent = self.parent_of(node)
-            if not parent:
-                continue
-            compartment = [parent, node]
-            self.compartments_for_nodes[node['id']] = compartment
-
-
-    def get_compartments(self, nodes=None, node_types=None):
-
-        if not nodes:
-            nodes = self.nodes()
-        compartments = []
-        for node in nodes:
-            node_id = node['id']
-            if node_id in self.compartments_for_nodes:
-                compartment = self.compartments_for_nodes[node_id]
-                if node_types:
-                    if compartment[0]['type'] in node_types:
-                        compartments.append(compartment)
-                else:
-                    compartments.append(compartment)
-        return compartments
-
 
 
 class SimpleTree( object ):
@@ -569,5 +412,164 @@ class SimpleTree( object ):
         '''
     
         return list(map(self.nodes, self.ancestor_ids(node_ids)))
+
+
+
+class Morphology(SimpleTree):
+
+    def __init__(self, nodes, node_id_cb, parent_id_cb):
+
+        self._nodes = {node_id_cb(n): n for n in nodes}
+        self._parent_id_cb = lambda node: parent_id_cb(node) if parent_id_cb(node) in self._nodes else None
+        self._parent_ids = {nid: self._parent_id_cb(n) for nid, n in iteritems(self._nodes)}
+        self._child_ids = {nid: [] for nid in self._nodes}
+        self.compartments_for_nodes = {}
+
+        for nid in self._parent_ids:
+            pid = self._parent_ids[nid]
+            if pid is not None:
+                self._child_ids[pid].append(nid)
+
+        self.node_id_cb = node_id_cb
+        self.parent_id_cb = self._parent_id_cb
+        self.nodes_by_types = {}
+        self._create_compartment_dictionary()
+        self.compartments = self.get_compartments()
+
+    def get_tree_list(self):
+        tree_list = []
+        tree_roots = self.get_roots()
+        for tree_root in tree_roots:
+            tree = []
+            tree_queue = queue.Queue()
+            tree_queue.put(tree_root)
+            while not tree_queue.empty():
+                root = tree_queue.get()
+                tree.append(root)
+                children = self.children_of(root)
+                if children:
+                    for child in children:
+                        tree_queue.put(child)
+            tree_list.append(tree)
+        return tree_list
+
+
+    def get_children_of_node_by_types(self, node, node_types):
+        children = self.children_of(node)
+        children_by_types = []
+        for child in children:
+            if child['type'] in node_types:
+                children_by_types.append(child)
+        return children_by_types
+
+    def get_children(self, node, node_types=None):
+        if node_types:
+            return self.get_children_of_node_by_types(node, node_types)
+        else:
+            return self.children_of(node)
+
+
+    def get_branching_nodes(self, node_types=None):
+        if not node_types:
+            nodes = self.get_non_soma_nodes()
+        else:
+            nodes = self.get_node_by_types(node_types)
+
+        branching_nodes = []
+        for node in nodes:
+            if len(self.get_children(node)) > 1:
+                branching_nodes.append(node)
+
+        return branching_nodes
+
+
+    def children_of(self, node):
+        if node:
+            children = self.children([node['id']])
+            if children:
+                return children[0]
+        return None
+
+    def node_by_id(self, node_id):
+        return self._nodes[node_id]
+
+
+    def get_roots(self):
+        return self.filter_nodes(lambda node: self.parent_id_cb(node) is None)
+
+    def get_root_id(self):
+        return self.node_id_cb(self.get_root())
+
+    def get_roots_for_nodes(self, nodes):
+        tree_roots = []
+        for node in nodes:
+            if self.parent_of(node) not in nodes:
+                tree_roots.append(node)
+        return tree_roots
+
+
+    def parent_of(self, node):
+        if node:
+            parent = self.parents([node['id']])
+            if parent:
+                return parent[0]
+        return None
+
+
+    def get_leaf_nodes(self, node_types=None):
+        if not node_types:
+            nodes = self.get_non_soma_nodes()
+        else:
+            nodes = self.get_node_by_types(node_types)
+
+        leaf_nodes = []
+        for node in nodes:
+            if not self.get_children(node):
+                leaf_nodes.append(node)
+
+    def get_non_soma_nodes(self):
+        return self.filter_nodes(lambda node: node['type'] != SOMA)
+
+
+    def get_node_by_types(self, node_types=None):
+        if node_types:
+            node_by_types = []
+            for node_type in node_types:
+                if node_type not in self.nodes_by_types:
+                    self.nodes_by_types[node_type] = self.filter_nodes(lambda node: node['type'] == node_type)
+                node_by_types += self.nodes_by_types[node_type]
+            return node_by_types
+        else:
+            return self.nodes()
+
+    def _create_compartment_dictionary(self):
+
+        nodes = self.nodes()
+        for node in nodes:
+            parent = self.parent_of(node)
+            if not parent:
+                continue
+            compartment = [parent, node]
+            self.compartments_for_nodes[node['id']] = compartment
+
+
+    def get_compartments(self, nodes=None, node_types=None):
+
+        if not nodes:
+            nodes = self.nodes()
+        compartments = []
+        for node in nodes:
+            node_id = node['id']
+            if node_id in self.compartments_for_nodes:
+                compartment = self.compartments_for_nodes[node_id]
+                if node_types:
+                    if compartment[0]['type'] in node_types:
+                        compartments.append(compartment)
+                else:
+                    compartments.append(compartment)
+        return compartments
+
+
+
 
 
