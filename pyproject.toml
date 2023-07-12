@@ -3,7 +3,7 @@ requires = [
     "setuptools>=42",
     "wheel",
     "scikit-build>=0.13",
-    "numpy>=1.14.5",
+    "numpy>=1.16.0",
     "scipy>=1.1.0",
     "setuptools-scm",
     "pybind11>=2.2.3"
@@ -21,9 +21,9 @@ description = "Segmentation for Axonal Connectomics"
 dynamic = ["version"]
 
 dependencies = [
-    "numpy>=1.14.5",
+    "numpy>=1.16.0",
     "scikit-build>=0.13",
-    "neuron_morphology",
+    "cloud-files",
     "torch==1.13.1",
     "tifffile==2023.1.23.1",
     "h5py>=2.7.1",
