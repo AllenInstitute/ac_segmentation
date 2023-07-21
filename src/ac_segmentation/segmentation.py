@@ -16,10 +16,11 @@ class SegmentationParameters(ags.ArgSchema):
     chunk_size = ags.fields.Int(dtype='int', required=False, default=416)
     overlap = ags.fields.Int(dtype='int', required=False, default=16)
 
+
 def predict(checkpoint, outdir, mip=0, **kwargs):
     
     #set default keyword arguments
-    defaultKwargs = {'iter_size': BoundingBox(Vector(0, 0, 0), Vector(128, 128, 32)) , 'stride': Vector(64, 64, 16),
+    defaultKwargs = {'iter_size': BoundingBox(Vector(0, 0, 0), Vector(512, 512, 64)), 'stride': Vector(256, 256, 32),
                     'gpu_device': 0, 'batch_size':20}
     kwargs = { **defaultKwargs, **kwargs }
     
@@ -50,7 +51,7 @@ def predict(checkpoint, outdir, mip=0, **kwargs):
 def predict_array(checkpoint, outdir, inarr, mip=0, **kwargs):
     
     #set default keyword arguments
-    defaultKwargs = {'output_type': 'volume', 'iter_size': BoundingBox(Vector(0, 0, 0), Vector(128, 128, 32)), 'stride': Vector(64, 64, 16),
+    defaultKwargs = {'output_type': 'volume', 'iter_size': BoundingBox(Vector(0, 0, 0), Vector(512, 512, 64)), 'stride': Vector(256, 256, 32),
                     'gpu_device': None, 'batch_size':20}
     kwargs = { **defaultKwargs, **kwargs }
     
@@ -70,7 +71,8 @@ def predict_array(checkpoint, outdir, inarr, mip=0, **kwargs):
     
     else:
         convert_prob_map(outdir, output_volume, 1)
-        
+        return output_volume
+
 
 def convert_prob_map(outdir, output_volume, chunk_n):
     savedir = os.path.join(outdir, 'Segmentation')
