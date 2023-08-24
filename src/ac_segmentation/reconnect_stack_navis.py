@@ -20,38 +20,38 @@ class ReconnectParameters(ags.ArgSchema):
     pxl_xyz = ags.fields.NumpyArray(dtype=float, required=False, 
                            default=[0.812,0.812,0.704], description='pxl size in um')
 
-def reconnect(infile, swc_outdir, modeldir, xyz_pxl): 
+def reconnect(infile, swc_outdir, modeldir, xyz_pxl, resample): 
     if not os.path.isdir(swc_outdir):
         os.mkdir(swc_outdir)
     
     # Prune short branches 
-    swc_prune(infile, os.path.join(swc_outdir, 'pruned.swc'),
-                pruning_threshold = 15)
+    morph_prune = swc_prune(navis.read_swc(infile), os.path.join(swc_outdir, 'pruned.swc'), pruning_threshold = 15)
     
     # Split branches and save all segments as a single file
-    swc_split_branches(os.path.join(swc_outdir, 'pruned.swc'),
-                        os.path.join(swc_outdir, 'segments.swc'))
-    sort_swc(os.path.join(swc_outdir, 'segments.swc'),
-             os.path.join(swc_outdir, 'segments.swc'))  
+    morph_split = swc_split_branches(morph_prune, os.path.join(swc_outdir, 'segments.swc'), 9)
+    morph_sort = sort_swc(morph_split, os.path.join(swc_outdir, 'segments.swc'))
     
     # # Upsample swc using vaa3d
+    upsample = navis.resample_skeleton(morph_sort, resample_to=resample)
     
     # Reconnect segments
-    input_file = os.path.join(swc_outdir, 'segments_resampled.swc')
+    neurons = extract_neuronlist(upsample, 0)
     # Load scaler
     scaler = load(os.path.join(modeldir, 'scaler.joblib'))
+    
     # Load classifier model
     clf = load(os.path.join(modeldir, 'LR_1.joblib')) 
     model_pxl = np.array([0.207,0.207,0.6]) # model pxl
-    xyz_pxl = xyz_pxl*np.mean(model_pxl/xyz_pxl)
+    xyz_pxl = np.array(xyz_pxl)*np.mean(model_pxl/xyz_pxl)
     max_iter = 3
     thresh_list = [0.5, 0.5, 0.5]
+    
     for num_iter in range(1,max_iter+1):
         threshold = thresh_list[num_iter-1]     
-        print('num_iter', num_iter, 'thresh', threshold, 'input_file', input_file)
+        print('num_iter', num_iter, 'thresh', threshold)
         
         # Find pairs
-        pair_data_iter = find_pairs(input_file, scaler, clf, xyz_pxl, threshold)
+        pair_data_iter = find_pairs(neurons, scaler, clf, query_dis=15)
                         
         # Remove duplicates
         pair_data_iter = remove_duplicates(pair_data_iter)
@@ -63,8 +63,10 @@ def reconnect(infile, swc_outdir, modeldir, xyz_pxl):
         
         # Merge segment pairs with prob below thresh
         output_file = os.path.join(swc_outdir, 'connect_iter%d.swc'%num_iter) 
-        new_morph = merge_pairs(input_file, output_file, csv_file, threshold)
-        input_file = output_file
+        new_list, pairs = merge_pairs(neurons, output_file, pair_data_iter, threshold)
+        neurons = new_list
+        
+    return neurons
             
             
 def load_swc(filepath):
@@ -181,7 +183,7 @@ def swc_prune(morph_in, outfile, pruning_threshold = 30,**kwargs):
     prune_count = 0
     bifur_nodes = morph_in.branch_points
     
-    graph = morph_in.get_graph_nx()
+    graph = morph_in.graph
     for i,node in bifur_nodes.iterrows():
         children = morph_in.nodes.loc[morph_in.nodes['parent_id'] == node['node_id']]
         for i, child in children.iterrows():
@@ -194,7 +196,8 @@ def swc_prune(morph_in, outfile, pruning_threshold = 30,**kwargs):
     new_nodes = morph_in.nodes.drop(rem)
     morph_in.nodes = new_nodes
     
-    navis.write_swc(morph_in, outfile)  
+    navis.write_swc(morph_in, outfile)
+    return morph_in
 
 
 def swc_split_branches(morph_in, outfile, node_len):
@@ -239,37 +242,23 @@ def dfs_labeling(st_node, new_starting_id, modifying_dict, graph):
 
 
 def sort_swc(morph_in,outfile):
-    #extract the new node order using depth first search
-    graph = morph_in.get_graph_nx()
-    new_node_ids = {}
-    start_label = 1
-    for root in morph_in.root:
-        seg_len = dfs_labeling(root,start_label,new_node_ids,graph)
-        start_label += seg_len 
+    #using the root lists, pull the current node order, and pair with an enumerated list as a dictionary
+    roots = morph_in.root
+    old_ids = np.array([element for nestedlist in morph_in.subtrees for element in nestedlist]).reshape(-1, 1)
+    new_ids = np.arange(1, len(old_ids)+1, 1, dtype=int).reshape(-1, 1)
+    new_node_ids = dict(np.concatenate((old_ids, new_ids), axis=1))
+    new_node_ids[-1] = -1
     
-    #edit the node and parent ids
-    new_output_dict = {}
-    for i,row in morph_in.nodes.iterrows():
-        new_id = new_node_ids[row['node_id']]
-        old_parent = row['parent_id']
-        if old_parent == -1:
-            new_parent = -1
-        else:
-            new_parent = new_node_ids[old_parent]
-
-        new_line = row.astype(str).values.flatten().tolist()
-        new_line[0] = str(new_id)
-        new_line[-2] = str(new_parent)
-        new_line = new_line[:-1]
-        new_line[-1] += '\n'
-        new_line = " ".join(new_line)
-        new_output_dict[new_id] = new_line
+    #alter node ids using dictionary and sort by node id
+    morph_in.nodes['parent_id'] = morph_in.nodes.apply(lambda row: new_node_ids[row['parent_id']], axis=1)
+    morph_in.nodes['node_id'] = morph_in.nodes.apply(lambda row: new_node_ids[row['node_id']], axis=1)
+    morph_in.nodes = morph_in.nodes.sort_values(by=['node_id'])
     
-    #write to new file
-    with open(outfile,"w") as f2:
-        for k in sorted(list(new_output_dict.keys())):
-            new_write_line = new_output_dict[k]
-            f2.write(new_write_line) 
+    #save to new file
+    out = morph_in.nodes.to_numpy()
+    np.savetxt(outfile, out[:,0:-1], fmt='%s') 
+    
+    return morph_in 
 
 
 
@@ -298,41 +287,43 @@ def distance(node1, node2, pxl_xyz):
 
 def get_nodes(morph_in, segment, end_node, n):
     nodes = [end_node]
+    segment = list(segment)
+
     i = 0
-    if int(morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node]['parent_id']) != -1:
-        while i < n:
-            next_node = [node for node in segment if node==int(morph_in.nodes.loc[morph_in.nodes['node_id'] == nodes[-1]]['parent_id'])]
-            if next_node==[]:
-                i = n
-            else:
-                nodes.append(next_node[0])
-            i+=1
-                         
-    else:
-        while i < n:
-            next_node = [node for node in segment if int(morph_in.nodes.loc[morph_in.nodes['node_id'] == node]['parent_id'])==nodes[-1]] 
-            if next_node==[]:
-                i = n
-            elif len(next_node) > 1: 
-                i = n
-            else:
-                nodes.append(next_node[0])
-            i+=1
-    return nodes 
-
-
-
-def calculate_vector(nodes, pxl_xyz):
-    nodes = nodes.values.tolist()
-    nodes_coord = np.vstack([np.array((node[2], node[3], node[4]))*pxl_xyz for node in nodes])
-    nodes_coord_mean = nodes_coord.mean(axis=0)
-    _, _, vv = np.linalg.svd(nodes_coord - nodes_coord_mean)
-    vector = vv[0]
     
-    vect_diff = (nodes_coord[-1,:] - nodes_coord[0,:])/np.linalg.norm(nodes_coord[-1,:] - nodes_coord[0,:])
-    if np.dot(-vector, vect_diff) > np.dot(vector, vect_diff):
-        vector*=-1
+    if end_node not in segment:
+        nodes = nodes
+    
+    elif int(morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node]['parent_id']) != -1:
+        ind = segment.index(end_node)
+            
+        if ind-n > 0:
+            nodes = segment[ind-n:ind+1]
+            nodes.reverse()
+        else:
+            nodes = segment[0:ind+1]
+            nodes.reverse()
+                        
+    else:
+        if nodes[0] in segment:
+            ind = segment.index(end_node)
+            nodes = segment[ind:ind+n+1]
+        else:
+            nodes = nodes
         
+    return nodes
+
+
+
+def calculate_vector(coords):
+    # TODO replace svd w/ eigh
+    _, _, vv = np.linalg.svd(coords - coords.mean(axis=0))
+    vector = vv[0]
+
+    # Fix wrong orientation (sign) of vector
+    vect_diff = (coords[-1,:] - coords[0,:])/np.linalg.norm(coords[-1,:] - coords[0,:])
+    if np.dot(-vector, vect_diff) > np.dot(vector, vect_diff):
+        vector*=-1    
     return vector 
 
 
@@ -341,11 +332,11 @@ def reroot_tree(start_node, tree, morph_in):
     neighbors_dict = {}
     for node in tree:
         node_neighbors = [] 
-        parent = int(morph_in.nodes.loc[morph_in.nodes['node_id'] == node]['parent_id'])
+        parent = int(morph_in.nodes.loc[morph_in.nodes['node_id'] == node, 'parent_id'])
 
         if parent != -1:
             node_neighbors.append(parent)
-        children = morph_in.nodes.loc[morph_in.nodes['parent_id'] == node]['node_id']
+        children = morph_in.nodes.loc[morph_in.nodes['parent_id'] == node, 'node_id']
         for ch in children:
             node_neighbors.append(ch)
         neighbors_dict[node] = node_neighbors
@@ -421,202 +412,186 @@ def connect_trees(nodes, morph_in):
     return morph_out
 
 
-def calculate_features(morph, tree1, end1, tree2, end2, pxl_xyz):
-    dist = distance(end1, end2, pxl_xyz)
-    treelist = [tree1, tree2]
-    endlist = [end1, end2]
-    cfactors = collinearity(morph, treelist, endlist, pxl_xyz)
-    return np.array([dist] + cfactors)
-
-
-def collinearity(morph_in, segments, end_nodes, pxl_xyz, num_nodes = [4,49]):
-    end_coord = [np.array((node['x'], node['y'], node['z']))*pxl_xyz for node in end_nodes]
-    cvect = end_coord[1] - end_coord[0]
+def calculate_feature(ns, end_node_ids, num_nodes=(5, 50)):
+    end_coords = np.vstack([n.nodes[n.nodes.node_id == end_node_id][["x", "y", "z"]].to_numpy() for n, end_node_id in zip(ns, end_node_ids)])
+    
+    cvect = end_coords[1] - end_coords [0]
     cvect_norm = np.linalg.norm(cvect)
+    cvect /= cvect_norm
     
-    if cvect_norm != 0:
-        cvect = cvect/cvect_norm
-        cf = []
-        for num in num_nodes:
-            vectors = []
-            for n in range(len(end_nodes)):
-                nodes = get_nodes(morph_in, segments[n], end_nodes[n]['node_id'], num)
-                df = morph_in.nodes.loc[morph_in.nodes['node_id'].isin(nodes)]
-                vect = calculate_vector(df.reindex([x - 1 for x in nodes]), pxl_xyz)
-                vectors.append(vect)
-                
-            cf.append(np.dot(-vectors[0], cvect))
-            cf.append(np.dot(vectors[1], cvect))
-    else:
-        cf = [np.NaN, np.NaN]
-    return cf  
+    cf = []
 
-
-def merge_pairs(morph, outfile, pair_data, thresh):
-    tree_list = morph.subtrees
-    pair_idx = np.arange(0,len(tree_list))
-    idx_list = []
-    for i in pair_idx:
-        select1 = [pair_data.index(p) for p in pair_data if p['tree1'] == i]
-        select2 = [pair_data.index(p) for p in pair_data if p['tree2'] == i]
-        
-        for s1 in select1:
-            if pair_data[s1]['prob'] > thresh:
-                if s1 not in idx_list:
-                    cfactors = np.array([pair_data[s1]['cf0_near0'], pair_data[s1]['cf1_near0'],
-                                        pair_data[s1]['cf0_far0'], pair_data[s1]['cf1_far0']])
-                    
-                    if len(np.where(cfactors < 0.5)[0]):
-                        print('idx %d'%(pair_data[s1]['idx']), cfactors)
-                    else:
-                        end_nodes = [pair_data[s1]['nid1'], pair_data[s1]['nid2']]
-                        morph = connect_trees(end_nodes, morph)
-                        idx_list.append(s1)
-                               
-        for s2 in select2:
-            if pair_data[s2]['prob'] > thresh:
-                if s2 not in idx_list:
-                    cfactors = np.array([pair_data[s2]['cf0_near0'], pair_data[s2]['cf1_near0'],
-                                        pair_data[s2]['cf0_far0'], pair_data[s2]['cf1_far0']])
-                    
-                    if len(np.where(cfactors < 0.5)[0]):
-                        print('idx %d'%(pair_data[s2]['idx']), cfactors)
-                    else:
-                        end_nodes = [pair_data[s2]['nid2'], pair_data[s2]['nid1']]
-                        morph = connect_trees(end_nodes, morph)
-                        idx_list.append(s2)
-
-
-    navis.write_swc(morph, outfile)
-    return morph 
-
-
-
-def find_pairs(morph_in, sc, cl, pxl_xyz, thresh, radius=range(0,15,5)):
-    leaf_nodes = list(morph_in.leafs['node_id'])
-    root_nodes = list(morph_in.root)
-    tree_list = morph_in.subtrees
-    
-    end_node_list = []
-    idx_list = []
-    
-    for i, tree in enumerate(tree_list):
-        root_node = [node for node in tree if node in root_nodes]
-        if int(morph_in.nodes['label'].loc[morph_in.nodes['node_id'] == root_node[0]]) != 1:
-            idx_list.append(i)
-            end_node_list.append(root_node[0])
+    for num in num_nodes:
+        for i, (n, end_node_id) in enumerate(zip(ns, end_node_ids)):
+            nodes = get_bfs_neighbor_nodes(n, end_node_id, num)
+            neighbor_loc_arr = nodes[["x", "y", "z"]].to_numpy()
             
-        tree_leaf_nodes = [i for i in tree if i in leaf_nodes]
-        
-        for node in tree_leaf_nodes:
-            idx_list.append(i)
-            end_node_list.append(node)
-    
-    idx_arr = np.array(idx_list)
-    end_node_coord = np.array([np.array((float(morph_in.nodes['x'].loc[morph_in.nodes['node_id'] == node])*pxl_xyz[0], float(morph_in.nodes['y'].loc[morph_in.nodes['node_id'] == node])*pxl_xyz[1],
-                            float(morph_in.nodes['z'].loc[morph_in.nodes['node_id'] == node])*pxl_xyz[2])) for node in end_node_list])
-    end_node_coord = end_node_coord.round(decimals=2, out=None)
-    
-    kdtree_list = []
-    for idx1, tree in enumerate(tree_list):
-        s1 = np.where(idx_arr == idx1)[0]
-        s2 = np.where(idx_arr != idx1)[0]
-        kdtree_list.append(KDTree(end_node_coord[s2], leaf_size=2))
-    
-    farray = np.zeros((len(end_node_list),len(end_node_list),5))
-    n = 0
-    num_ends = 5
-    pair_data = []
-    
-    
-    for idx1, tree in enumerate(tree_list):
-        
-        s1 = np.where(idx_arr == idx1)[0]
-        s2 = np.where(idx_arr != idx1)[0]
-        kdtree = kdtree_list[idx1]
-        for s in s1:
-            min_dist_idx, dist = kdtree.query_radius(end_node_coord[s].reshape(1,3), radius[-1],
-                                              return_distance=True, sort_results=True)
-            select = []
-            for i in range(len(radius)-1):
-                select.append(np.where((dist[0]>radius[i])&(dist[0]<=radius[i+1])))
+            if i==0 and end_node_id == nodes["node_id"].to_numpy()[0]:
+                neighbor_loc_arr = np.flip(neighbor_loc_arr, axis=0)
                 
-            for l in select:
-                p_arr = s2[min_dist_idx[0][l]]
-                idx2_arr = idx_arr[p_arr]
+            if i==1 and end_node_id == nodes["node_id"].to_numpy()[-1]:
+                neighbor_loc_arr = np.flip(neighbor_loc_arr, axis=0)
                 
-                if len(p_arr) > 0:
-                    probs = np.zeros((len(p_arr),))
-                    nodes = np.empty((len(p_arr),), dtype=object)
-                    features = np.empty((len(p_arr),), dtype=object)
-                    for i, p in enumerate(p_arr):
-                        if farray[s,p,0] == 0:
-                            f = calculate_features(morph_in, tree_list[idx1],  morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[s]].squeeze(),
-                                                  tree_list[idx2_arr[i]], morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[p]].squeeze(), pxl_xyz)
-                            farray[s,p,:] = f
-                        else:
-                            f = farray[s,p,:]
-                            
-                        dist1, min_dist_idx1 = kdtree.query(end_node_coord[s].reshape(1,3), k=num_ends)
-                        q_arr = s2[min_dist_idx1[0]]
-                        s3 = np.where(q_arr != p)[0][0:num_ends-1]
-                        q_arr = q_arr[s3]
-                        q_arr = q_arr[:num_ends-1]
-                        dist1 = dist1[:,s3]
-                        idx3_arr = idx_arr[q_arr]
-                        for j, q in enumerate(q_arr):
-                            if farray[s,q,0] == 0:
-                                f1 = calculate_features(morph_in, tree_list[idx1], morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[s]].squeeze(),
-                                              tree_list[idx3_arr[j]], morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[q]].squeeze(), pxl_xyz)
-                                farray[s,q,:] = f1
-                            else:
-                                f1 = farray[s,q,:]
-                            f = np.concatenate((f,f1))
+            vec = calculate_vector(neighbor_loc_arr)
+            cf.append(np.dot(vec, cvect))
+            
+    return np.array([cvect_norm] + cf)
 
-                        s3 = np.where(idx_arr != idx2_arr[i])[0]
-                        kdtree1 = kdtree_list[idx2_arr[i]]
-                        dist1, min_dist_idx1 = kdtree1.query(end_node_coord[p].reshape(1,3), k=num_ends)
-                        q_arr = s3[min_dist_idx1[0]]
-                        s4 = np.where(q_arr != s)[0][0:num_ends-1]
-                        q_arr = q_arr[s4]
-                        q_arr = q_arr[:num_ends-1]
-                        dist1 = dist1[:,s4]
-                        idx3_arr = idx_arr[q_arr]
-                        for j, q in enumerate(q_arr):
-                            if farray[p,q,0] == 0:
-                                f1 = calculate_features(morph_in, tree_list[idx2_arr[i]], morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[p]].squeeze(),
-                                              tree_list[idx3_arr[j]], morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[q]].squeeze(), pxl_xyz)
-                                farray[p,q,:] = f1
-                            else:
-                                f1 = farray[p,q,:]
-                            f = np.concatenate((f,f1))
-                        features[i] = f
-                        x = sc.transform(f.reshape(1,-1))
-                        probs[i] = cl.predict_proba(x)[0][1]
-                        
-                    probs_max = np.max(probs)
-                    k_max = np.argmax(probs)
-                    if probs_max >= thresh:
-                        pair_dict = {}
-                        pair_dict['idx'] = n
-                        pair_dict['tree1'] = idx1
-                        pair_dict['tree2'] = idx2_arr[k_max]
-                        pair_dict['nid1'] = int(morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[s]]['node_id'])
-                        pair_dict['pid1'] = int(morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[s]]['parent_id'])
-                        pair_dict['nid2'] = int(morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[p_arr[k_max]]]['node_id'])
-                        pair_dict['pid2'] = int(morph_in.nodes.loc[morph_in.nodes['node_id'] == end_node_list[p_arr[k_max]]]['parent_id'])
-                        pair_dict['prob'] = probs_max
-                        for i in range(num_ends*2 -1):
-                            pair_dict['distance%d'%i] = features[k_max][i*5]
-                            pair_dict['cf0_near%d'%i] = features[k_max][i*5+1]
-                            pair_dict['cf1_near%d'%i] = features[k_max][i*5+2]
-                            pair_dict['cf0_far%d'%i] = features[k_max][i*5+3]
-                            pair_dict['cf1_far%d'%i] = features[k_max][i*5+4]
-                        pair_data.append(pair_dict)
-                        n += 1
-                        break
-                        
-    return pair_data
+
+def collinearity(ns, end_node_ids, num_nodes=(4, 49)):
+    end_coords = np.vstack([n.nodes[n.nodes.node_id == end_node_id][["x", "y", "z"]].to_numpy() for n, end_node_id in zip(ns, end_node_ids)])
+    cvect = end_coords[1] - end_coords[0]
+    cvect_norm = np.linalg.norm(cvect)
+    cvect /= cvect_norm
+
+    cf = []
+
+    for num in num_nodes:
+        for i, (n, end_node_id) in enumerate(zip(ns, end_node_ids)):
+            neighbor_loc_arr = get_bfs_neighbor_nodes(n, end_node_id, num)[["x", "y", "z"]].to_numpy()
+            vec = calculate_vector(neighbor_loc_arr)
+            cf.append(np.dot(-vec, cvect))
+    return cf
+
+
+def merge_pairs(neuro_list, outfile, pair_data, thresh): 
+    ids = dict(zip(neuro_list.id, neuro_list.id))
+    pairs = []
+    
+    for ns,c_feat in pair_data:
+        cfactors = np.array(c_feat[2:6])
+        if len(np.where(cfactors < 0.5)[0]) or c_feat[0] < thresh:
+            pass
+        else:
+            c = neuro_list[neuro_list.id == [ids[ns[0]]]] + neuro_list[neuro_list.id == [ids[ns[1]]]]
+            new_neu = navis.stitch_skeletons(c, method='NONE')
+            neuro_list = neuro_list[(neuro_list.id != ns[0])]
+            neuro_list = neuro_list[(neuro_list.id != ns[1])]
+            
+            if new_neu.id == ids[ns[0]]:
+                ids[ns[1]] = ids[ns[0]] 
+                
+            else:
+                ids[ns[0]] = ids[ns[1]] 
+            
+            neuro_list.append(new_neu)
+            pairs.append([ns[0],ns[1]])
+                  
+    print("Number of Pairs: " + str(len(pairs)))
+    return neuro_list, pairs
+
+def find_pairs(neuro_list, sc, cl, query_dis=15):    
+    #find end nodes and just roots nodes
+    pts = neuro_list.nodes[neuro_list.nodes['type'].isin(['root', 'end'])]
+    roots = list(pts[pts['type'].isin(['root'])]['node_id'])
+    ids = dict(zip([i.id for i in neuro_list], list(range(0,len(neuro_list)))))
+    
+    endpts = np.array(pts[['x','y','z']])
+    endpts_neuron_id = np.array(pts['neuron'])
+    endpts_node_id = np.array(pts['node_id'])
+    endpts_neuron_idx = np.array([ids[x] for x in endpts_neuron_id])
+    
+    #create kdtree with endpoints and find all pairs with given query distance
+    kdt = scipy.spatial.KDTree(endpts, leafsize=2)
+    pairs = kdt.query_pairs(query_dis)
+    pairs = {frozenset(p) for p in pairs if len({*endpts_neuron_id[[*p]]})>1}
+
+    # calculate features for pairs
+    neighbors_considered = 4  
+    pair_features = {}
+    subfeat = {}
+    
+    for pq in pairs:
+        # initial feature based on condidate pair
+        f = tuple()
+        p, q = pq
+        candidate_neuron_idxs = endpts_neuron_idx[[p, q]]
+        candidate_neurons = neuro_list[candidate_neuron_idxs]
+        candidate_end_node_ids = endpts_node_id[[p, q]]
+        
+        try:
+            cf = subfeat[str(candidate_end_node_ids[0])  + str(candidate_end_node_ids[1])]
+            
+        except:
+            cf = tuple(calculate_feature(candidate_neurons, candidate_end_node_ids))
+            subfeat[str(candidate_end_node_ids[0]) + str(candidate_end_node_ids[1])] = cf
+        f += cf
+
+        p_neuron, q_neuron = candidate_neurons
+        p_end_node_id, q_end_node_id = candidate_end_node_ids
+        
+        # features from pairing p with next nearest neighbors
+        dists, idxs = kdt.query(endpts[p], k=neighbors_considered+2)
+        p_knn_idxs = [i for i in idxs if i not in pq][:neighbors_considered]
+        p_knn_neurons = [
+            (p_neuron, n) for n in neuro_list[endpts_neuron_idx[p_knn_idxs]]
+        ]
+
+        p_knn_end_node_ids =[
+            (p_end_node_id, end_node_id)
+            for end_node_id in endpts_node_id[p_knn_idxs]
+        ]
+        
+        for nn_neurons, nn_end_node_ids  in zip(p_knn_neurons, p_knn_end_node_ids):
+            
+            try:
+                cf = subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])]
+                
+            except:
+                cf = tuple(calculate_feature(nn_neurons, nn_end_node_ids))
+                subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])] = cf
+            f += cf
+            
+        # features from pairing q with next nearest neighbors
+        dists, idxs = kdt.query(endpts[q], k=neighbors_considered+2)
+        q_knn_idxs = [i for i in idxs if i not in pq][:neighbors_considered]
+        q_knn_neurons = [
+            (q_neuron, n) for n in neuro_list[endpts_neuron_idx[q_knn_idxs]]
+        ]
+        q_knn_end_node_ids =[
+            (q_end_node_id, end_node_id)
+            for end_node_id in endpts_node_id[q_knn_idxs]
+        ]
+
+        for nn_neurons, nn_end_node_ids  in zip(q_knn_neurons, q_knn_end_node_ids):
+            try:
+                cf = subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])]
+                
+            except:
+                cf = tuple(calculate_feature(nn_neurons, nn_end_node_ids))
+                subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])] = cf
+            f += cf
+        
+        #calculate probability
+        f = np.array(f)
+        x = sc.transform(f.reshape(1,-1))
+        prob = cl.predict_proba(x)[0][1]
+        pair_features[endpts_neuron_id[p],endpts_neuron_id[q]] = np.insert(f, 0, prob)
+
+    pair_features = list(pair_features.items())
+    return pair_features
+
+
+def extract_neuronlist(morph_in, node_min):
+    def ind_neuron(tree):
+        q = morph_in.nodes.query('node_id in @tree')
+        neuron = navis.NeuronList(pd.DataFrame(q))
+        return neuron
+    
+    trees = morph_in.subtrees
+    res = Parallel(n_jobs=4)(delayed(ind_neuron)(tree) for tree in trees if len(tree) >= node_min)
+
+    return navis.NeuronList(res)
+
+def get_bfs_neighbor_nodes(n, node_id, num_nodes):
+    node_type = n.nodes[n.nodes.node_id == node_id].type.values[0]
+    if node_type == "root":
+        node_ids = networkx.traversal.bfs_tree(n.graph, node_id, depth_limit=num_nodes-1, reverse=True).nodes
+    elif node_type =="end":
+        node_ids = networkx.traversal.bfs_tree(n.graph, node_id, depth_limit=num_nodes-1).nodes 
+    else:
+        raise NotImplementedError("only supports root and end nodes")
+    return n.nodes[n.nodes.node_id.isin(node_ids)]
     
 
             
