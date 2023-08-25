@@ -592,6 +592,26 @@ def get_bfs_neighbor_nodes(n, node_id, num_nodes):
     else:
         raise NotImplementedError("only supports root and end nodes")
     return n.nodes[n.nodes.node_id.isin(node_ids)]
+
+def navis_to_morph(morph_in):
+    neu = morph_in.nodes.drop(columns=['type'])
+    neu = neu.rename(columns={"node_id": "id", "parent_id": "parent"})
+    neu = neu.to_dict('records')
+    #convert navis object to morphology object
+    morph_out = Morphology(neu,
+        node_id_cb=lambda node: node['id'],
+        parent_id_cb=lambda node: node['parent'] )
+    
+    return morph_out
+    
+    
+def morph_to_navis(morph_in):
+    neu = pd.DataFrame(morph_in.nodes())
+    neu = neu.rename(columns={"id": "node_id", "parent": "parent_id"})
+    #convert morphology object to navis object
+    morph_out = navis.TreeNeuron(neu)
+
+    return morph_out
     
 
             
