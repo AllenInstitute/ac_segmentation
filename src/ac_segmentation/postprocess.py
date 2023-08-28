@@ -99,6 +99,75 @@ def postprocess(outdir, chunk_size, overlap, threshold=0.2, size_threshold=2000)
                     morphology_to_swc(dict_out['morph'], os.path.join(chunkdir, f))
                 except:
                     print('error')
+
+
+def postprocess_kimi(outdir, bound_box, chunk_size, overlap, threshold=0.2, size_threshold=2000, check_rad=False):
+    num_chunks = len([f for f in os.listdir(os.path.join(outdir, 'Segmentation')) 
+                            if f.startswith('chunk')])
+    
+    savedir = os.path.join(outdir, 'swc_files_KIMI')
+    if not os.path.isdir(savedir):
+        os.mkdir(savedir)
+    
+    for n in range(num_chunks):
+        stack = load_stack(os.path.join(outdir, 'Segmentation', 'chunk%02d'%n))
+        
+        # Crop stack to original size 
+        new_stack_size = bound_box[2], bound_box[1], bound_box[0]  #zyx
+        stack = stack[0:new_stack_size[0],0:new_stack_size[1],0:new_stack_size[2]]
+        stack_size = stack.shape
+
+        # Zero values below threshold
+        stack[stack <= int(np.round(255*threshold))] = 0
+        
+        # Save nonzero pixels as csv file (x,y,z,I)
+        z,y,x = np.nonzero(stack)
+        I = stack[z,y,x]
+        np.savetxt(os.path.join(outdir, 'Segmentation', 'chunk%02d.csv'%n), 
+                   np.stack((x,y,z,I), axis=1), fmt='%u', delimiter=',', header='x,y,z,I')
+        
+        # Binarize stack based on threshold
+        stack = (stack > int(np.round(255*threshold))).astype(np.uint8)
+
+        # Label connected components
+        s = ndi.generate_binary_structure(3,3)
+        stack = ndi.label(stack,structure=s)[0].astype(np.uint16)
+        num_cc = np.max(stack)
+
+        if num_cc != 0:
+            # Remove components smaller than size_threshold 
+            stack = remove_small_objects(stack, min_size=size_threshold, connectivity=3)
+            unique_labels, counts = np.unique(stack,return_counts=True)
+            
+            skels = kimimaro.skeletonize(
+              stack, 
+              teasar_params={
+                "scale": 2, 
+                "const": 5, # influences the finger branches allowed
+                "pdrf_scale": 1,
+                "pdrf_exponent": 1,
+                "soma_acceptance_threshold": 3500, # physical units
+                "soma_detection_threshold": 750, # physical units
+                "soma_invalidation_const": 300, # physical units
+                "soma_invalidation_scale": 2,
+                "max_paths": 300, # default None
+              },
+              dust_threshold=10, # skip connected components with fewer than this many voxels
+              anisotropy=(1,1,1), # default True #influences the dimension scale
+              fix_branching=True, # default True
+              fix_borders=True, # default True
+              fill_holes=False, # default False
+              fix_avocados=False, # default False
+              progress=True, # default False, show progress bar
+              parallel=1, # <= 0 all cpu, 1 single process, 2+ multiprocess
+              parallel_chunk_size=1, # how many skeletons to process before updating progress bar
+            )
+            
+        for key in skels.keys():
+            
+            skels[key].vertices = skels[key].vertices[:, [2, 1,0]]
+            with open(outdir + '/swc_files_KIMI/' + str(skels[key].id).zfill(4) + '.swc', 'wt') as f:
+                f.write(skels[key].to_swc())  
             
 def load_stack(dirname):
     # Load image stack filenames
