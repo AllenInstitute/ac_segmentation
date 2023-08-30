@@ -9,6 +9,7 @@ from collections import deque, defaultdict
 from scipy import ndimage as ndi
 from skimage.morphology import remove_small_objects, skeletonize_3d
 import tifffile as tif
+import kimimaro
 
 class PostprocessParameters(ags.ArgSchema):
     output_dir = ags.fields.OutputDir(required=True, description='Output directory')
@@ -101,16 +102,19 @@ def postprocess(outdir, chunk_size, overlap, threshold=0.2, size_threshold=2000)
                     print('error')
 
 
-def postprocess_kimi(outdir, bound_box, chunk_size, overlap, threshold=0.2, size_threshold=2000, check_rad=False):
-    num_chunks = len([f for f in os.listdir(os.path.join(outdir, 'Segmentation')) 
-                            if f.startswith('chunk')])
+def postprocess_kimi(outdir, bound_box, chunk_size, overlap, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
+    chunks = [name for name in os.listdir(os.path.join(outdir, 'Segmentation')) if name.startswith('chunk') == True]
+    
+    #set default keyword arguments
+    defaultKwargs = {'scale': 2, 'constant': 5, 'fill_holes' : False, 'parallel': 1, 'dust_threshold' : 10}
+    kwargs = { **defaultKwargs, **kwargs }
     
     savedir = os.path.join(outdir, 'swc_files_KIMI')
     if not os.path.isdir(savedir):
         os.mkdir(savedir)
     
-    for n in range(num_chunks):
-        stack = load_stack(os.path.join(outdir, 'Segmentation', 'chunk%02d'%n))
+    for folder in chunks:
+        stack = load_stack(os.path.join(outdir, 'Segmentation', folder))
         
         # Crop stack to original size 
         new_stack_size = bound_box[2], bound_box[1], bound_box[0]  #zyx
@@ -123,7 +127,7 @@ def postprocess_kimi(outdir, bound_box, chunk_size, overlap, threshold=0.2, size
         # Save nonzero pixels as csv file (x,y,z,I)
         z,y,x = np.nonzero(stack)
         I = stack[z,y,x]
-        np.savetxt(os.path.join(outdir, 'Segmentation', 'chunk%02d.csv'%n), 
+        np.savetxt(os.path.join(outdir, 'Segmentation', 'nonzero_pix.csv'), 
                    np.stack((x,y,z,I), axis=1), fmt='%u', delimiter=',', header='x,y,z,I')
         
         # Binarize stack based on threshold
@@ -142,24 +146,24 @@ def postprocess_kimi(outdir, bound_box, chunk_size, overlap, threshold=0.2, size
             skels = kimimaro.skeletonize(
               stack, 
               teasar_params={
-                "scale": 2, 
-                "const": 5, # influences the finger branches allowed
-                "pdrf_scale": 1,
+                "scale": kwargs['scale'], 
+                "const": kwargs['constant'], # influences the finger branches allowed
+                "pdrf_scale": 10000,
                 "pdrf_exponent": 1,
                 "soma_acceptance_threshold": 3500, # physical units
                 "soma_detection_threshold": 750, # physical units
                 "soma_invalidation_const": 300, # physical units
                 "soma_invalidation_scale": 2,
-                "max_paths": 300, # default None
+                "max_paths": 50, # default None
               },
-              dust_threshold=10, # skip connected components with fewer than this many voxels
+              dust_threshold=kwargs['dust_threshold'], # skip connected components with fewer than this many voxels
               anisotropy=(1,1,1), # default True #influences the dimension scale
               fix_branching=True, # default True
               fix_borders=True, # default True
-              fill_holes=False, # default False
+              fill_holes=kwargs['fill_holes'], # default False
               fix_avocados=False, # default False
               progress=True, # default False, show progress bar
-              parallel=1, # <= 0 all cpu, 1 single process, 2+ multiprocess
+              parallel=kwargs['parallel'], # <= 0 all cpu, 1 single process, 2+ multiprocess
               parallel_chunk_size=1, # how many skeletons to process before updating progress bar
             )
             

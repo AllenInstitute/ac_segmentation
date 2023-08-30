@@ -34,5 +34,6 @@ dependencies = [
     "scikit-learn",
     "pandas",
     "joblib",
-    "navis"
+    "navis",
+    "kimimaro"
 ]

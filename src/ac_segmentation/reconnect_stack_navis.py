@@ -3,15 +3,17 @@ import numpy as np
 import pandas as pd
 import argschema as ags
 from operator import add
-from collections import deque, defaultdict, OrderedDict
-from joblib import dump, load
+from collections import deque, defaultdict, OrderedDict, Counter
+from joblib import dump, load, Parallel, delayed
 import copy
 from sklearn.neighbors import KDTree
 from scipy.spatial.distance import euclidean
+import scipy
 import navis
 import copy
 import networkx as nx
 import itertools
+from uuid import UUID
 
 class ReconnectParameters(ags.ArgSchema):
     input_file = ags.fields.InputFile(required=True, description='Input file')
@@ -20,7 +22,7 @@ class ReconnectParameters(ags.ArgSchema):
     pxl_xyz = ags.fields.NumpyArray(dtype=float, required=False, 
                            default=[0.812,0.812,0.704], description='pxl size in um')
 
-def reconnect(infile, swc_outdir, modeldir, xyz_pxl, resample): 
+def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, iter_thresh = [0.5,0.5,0.5], resample=2, query_dis=10): 
     if not os.path.isdir(swc_outdir):
         os.mkdir(swc_outdir)
     
@@ -31,30 +33,21 @@ def reconnect(infile, swc_outdir, modeldir, xyz_pxl, resample):
     morph_split = swc_split_branches(morph_prune, os.path.join(swc_outdir, 'segments.swc'), 9)
     morph_sort = sort_swc(morph_split, os.path.join(swc_outdir, 'segments.swc'))
     
-    # # Upsample swc using vaa3d
+    # Upsample swc
     upsample = navis.resample_skeleton(morph_sort, resample_to=resample)
     
-    # Reconnect segments
+    # Extract neuronlist from nodelist
     neurons = extract_neuronlist(upsample, 0)
-    # Load scaler
-    scaler = load(os.path.join(modeldir, 'scaler.joblib'))
     
-    # Load classifier model
-    clf = load(os.path.join(modeldir, 'LR_1.joblib')) 
-    model_pxl = np.array([0.207,0.207,0.6]) # model pxl
+    # Model pxl
+    model_pxl = np.array([0.207,0.207,0.6])
     xyz_pxl = np.array(xyz_pxl)*np.mean(model_pxl/xyz_pxl)
-    max_iter = 3
-    thresh_list = [0.5, 0.5, 0.5]
     
-    for num_iter in range(1,max_iter+1):
-        threshold = thresh_list[num_iter-1]     
-        print('num_iter', num_iter, 'thresh', threshold)
+    for num_iter, thresh in enumerate(iter_thresh):     
+        print('num_iter', num_iter, 'thresh', thresh)
         
         # Find pairs
-        pair_data_iter = find_pairs(neurons, scaler, clf, query_dis=15)
-                        
-        # Remove duplicates
-        pair_data_iter = remove_duplicates(pair_data_iter)
+        pair_data_iter = find_pairs(neurons, sc, cl, query_dis=query_dis)
         
         # Save pair_data as csv file
         df1 = pd.DataFrame.from_dict(pair_data_iter)
@@ -63,8 +56,11 @@ def reconnect(infile, swc_outdir, modeldir, xyz_pxl, resample):
         
         # Merge segment pairs with prob below thresh
         output_file = os.path.join(swc_outdir, 'connect_iter%d.swc'%num_iter) 
-        new_list, pairs = merge_pairs(neurons, output_file, pair_data_iter, threshold)
+        new_list = merge_pairs(neurons, output_file, pair_data_iter, thresh)
         neurons = new_list
+        
+    #output new swc file    
+    neurons.to_swc(swc_outdir + "reconnected.swc")
         
     return neurons
             
@@ -113,70 +109,6 @@ def swc_multi_to_single(dirname, fname):
     save_swc(os.path.join(dirname,fname), trace_new)          
 
 
-def remove_duplicates(pair_data): 
-    t1 = [pair['tree1'] for pair in pair_data]
-    t2 = [pair['tree2'] for pair in pair_data]
-    num_tree = max(max(t1), max(t2)) + 1
-    dupl_list = []    
-    for i in range(num_tree):
-        select1 = [pair_data.index(p) for p in pair_data if p['tree1'] == i]
-        js = [pair_data[s1]['tree2'] for s1 in select1]
-        js_unique = np.unique(js)
-        for j in js_unique:
-            s2 = np.where(js == j)[0]
-            if len(s2) > 1:
-                probs = [pair_data[select1[s]]['prob'] for s in s2]
-                idx = np.argmax(probs)
-                for k, s in enumerate(s2):
-                    if k != idx:
-                        dupl_list.append(select1[s])
-    pair_data1 = [pair_data[i] for i in range(len(pair_data)) if i not in dupl_list]  
-    if not pair_data1:
-        return
-    
-    dupl_list = []    
-    for i in range(num_tree):
-        select1 = [pair_data1.index(p) for p in pair_data1 if p['tree1'] == i]
-        for s1 in select1:
-            j = pair_data1[s1]['tree2']
-            select2 = [pair_data1.index(p) for p in pair_data1 if p['tree1'] == j]
-            for s2 in select2:
-                k = pair_data1[s2]['tree2']
-                if k == i:
-                    if pair_data1[s1]['prob'] < pair_data1[s2]['prob']:
-                        dupl_list.append(s1)
-                    elif pair_data1[s1]['prob'] > pair_data1[s2]['prob']:
-                        dupl_list.append(s2)
-                    else:    
-                        dupl_list.append(max(s1,s2))
-    pair_data1 = [pair_data1[i] for i in range(len(pair_data1)) if i not in dupl_list]
-    if not pair_data1:
-        return
-    
-    n1 = [pair['nid1'] for pair in pair_data1]
-    n2 = [pair['nid2'] for pair in pair_data1]
-    num_nid = max(max(n1), max(n2)) + 1
-    
-    dupl_list = []
-    for i in range(num_nid):
-        select = []
-        select1 = [pair_data1.index(p) for p in pair_data1 if p['nid1'] == i]
-        if len(select1) > 0:
-            for s1 in select1:
-                select.append(s1)
-        select2 = [pair_data1.index(p) for p in pair_data1 if p['nid2'] == i]
-        if len(select2) > 0:
-            for s2 in select2:
-                select.append(s2)
-        if len(select) > 1:
-            probs = [pair_data1[s]['prob'] for s in select]
-            idx = np.argmax(probs)
-            for k, s in enumerate(select):
-                if k != idx:
-                    dupl_list.append(s)
-    pair_data1 = [pair_data1[i] for i in range(len(pair_data1)) if i not in dupl_list]
-    return pair_data1    
-
 
 def swc_prune(morph_in, outfile, pruning_threshold = 30,**kwargs):
     nodes_to_remove = set()
@@ -191,9 +123,8 @@ def swc_prune(morph_in, outfile, pruning_threshold = 30,**kwargs):
             if child_seg_length < pruning_threshold:
                 prune_count+=1
                 [nodes_to_remove.add(n) for n in child_remove_nodes]
-                
-    rem = [x - 1 for x in nodes_to_remove]   
-    new_nodes = morph_in.nodes.drop(rem)
+        
+    new_nodes = morph_in.nodes[~morph_in.nodes['node_id'].isin(nodes_to_remove)]
     morph_in.nodes = new_nodes
     
     navis.write_swc(morph_in, outfile)
@@ -203,6 +134,7 @@ def swc_prune(morph_in, outfile, pruning_threshold = 30,**kwargs):
 def swc_split_branches(morph_in, outfile, node_len):
     # Find branching nodes
     branch_nodes = list(morph_in.branch_points['node_id'])
+    nodes_to_remove = []
 
     # Split branches
     for i in branch_nodes:
@@ -210,18 +142,12 @@ def swc_split_branches(morph_in, outfile, node_len):
         for child in children:
             morph_in.nodes.loc[morph_in.nodes['node_id'] == child, 'parent_id'] = -1
     
-    # Find all trees and remove short ones
-    tree_list = morph_in.segments
-    node_remove = []
+    # Remove segments that are smaller than a given node length
+    for tree in morph_in.subtrees:
+        if len(tree) < node_len:
+            nodes_to_remove.extend(tree)
+    morph_in.nodes = morph_in.nodes[~morph_in.nodes['node_id'].isin(nodes_to_remove)]
     
-    for tree in tree_list:
-        if len(tree) <= node_len:
-            node_remove += list(tree)
-            
-    node_remove = [x - 1 for x in node_remove]
-
-    # Drop nodes from node list and replace
-    morph_in.nodes = morph_in.nodes.drop(node_remove)
     navis.write_swc(morph_in, outfile)
     return morph_in
 
@@ -455,30 +381,49 @@ def collinearity(ns, end_node_ids, num_nodes=(4, 49)):
 
 
 def merge_pairs(neuro_list, outfile, pair_data, thresh): 
-    ids = dict(zip(neuro_list.id, neuro_list.id))
-    pairs = []
+    pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < 0.5)[0])==0) and (x[1][0] > thresh))]
+    merged_list = []
     
-    for ns,c_feat in pair_data:
-        cfactors = np.array(c_feat[2:6])
-        if len(np.where(cfactors < 0.5)[0]) or c_feat[0] < thresh:
-            pass
-        else:
-            c = neuro_list[neuro_list.id == [ids[ns[0]]]] + neuro_list[neuro_list.id == [ids[ns[1]]]]
-            new_neu = navis.stitch_skeletons(c, method='NONE')
-            neuro_list = neuro_list[(neuro_list.id != ns[0])]
-            neuro_list = neuro_list[(neuro_list.id != ns[1])]
-            
-            if new_neu.id == ids[ns[0]]:
-                ids[ns[1]] = ids[ns[0]] 
+    #remove duplicates based on highest probability
+    ids1 = [x[0][0] for x in pair_data]
+    count1 = dict(Counter(ids1))
+    for i,j in count1.items():
+        if j > 1:
+            id_same = [x for x in pair_data if x[0][0] == i]
+            prob = [x[1][0] for x in id_same]
+            rem = [i for i in id_same if i[1][0] < max(prob)]
+            for item in rem:
+                pair_data = [i for i in pair_data if i[0] != item[0]]
                 
-            else:
-                ids[ns[0]] = ids[ns[1]] 
+    ids2 = [x[0][1] for x in pair_data]
+    count2 = dict(Counter(ids2))
+    for i,j in count2.items():
+        if j > 1:
+            id_same = [x for x in pair_data if x[0][1] == i]
+            prob = [x[1][0] for x in id_same]
+            rem = [i for i in id_same if i[1][0] < max(prob)]
+            for item in rem:
+                pair_data = [i for i in pair_data if i[0] != item[0]]
+    
+    #merge pairs, but skip any that have already been merged
+    for ns,c_feat in pair_data:
+        if ns[0] in merged_list or ns[1] in merged_list:
+            continue
+        c = neuro_list[neuro_list.id == [ns[0]]] + neuro_list[neuro_list.id == [ns[1]]]
+        new_neu = navis.stitch_skeletons(c, method='NONE')
+        neuro_list = neuro_list[(neuro_list.id != ns[0])]
+        neuro_list = neuro_list[(neuro_list.id != ns[1])]
             
-            neuro_list.append(new_neu)
-            pairs.append([ns[0],ns[1]])
+        neuro_list.append(new_neu)
+        merged_list += [ns[0]] + [ns[1]]
+        
+    #reset soma to none
+    for neu in neuro_list:
+        neu.soma = None
+        
                   
-    print("Number of Pairs: " + str(len(pairs)))
-    return neuro_list, pairs
+    print("Number of Pairs: " + str(int(len(merged_list)/2)))
+    return neuro_list
 
 def find_pairs(neuro_list, sc, cl, query_dis=15):    
     #find end nodes and just roots nodes
@@ -562,9 +507,12 @@ def find_pairs(neuro_list, sc, cl, query_dis=15):
                 subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])] = cf
             f += cf
         
-        #calculate probability
+         #calculate probability
         f = np.array(f)
+        #weird error in reconnect function with na in some f arrays
+        f[np.isnan(f)] = 0
         x = sc.transform(f.reshape(1,-1))
+
         prob = cl.predict_proba(x)[0][1]
         pair_features[endpts_neuron_id[p],endpts_neuron_id[q]] = np.insert(f, 0, prob)
 
@@ -586,9 +534,9 @@ def extract_neuronlist(morph_in, node_min):
 def get_bfs_neighbor_nodes(n, node_id, num_nodes):
     node_type = n.nodes[n.nodes.node_id == node_id].type.values[0]
     if node_type == "root":
-        node_ids = networkx.traversal.bfs_tree(n.graph, node_id, depth_limit=num_nodes-1, reverse=True).nodes
+        node_ids = nx.traversal.bfs_tree(n.graph, node_id, depth_limit=num_nodes-1, reverse=True).nodes
     elif node_type =="end":
-        node_ids = networkx.traversal.bfs_tree(n.graph, node_id, depth_limit=num_nodes-1).nodes 
+        node_ids = nx.traversal.bfs_tree(n.graph, node_id, depth_limit=num_nodes-1).nodes 
     else:
         raise NotImplementedError("only supports root and end nodes")
     return n.nodes[n.nodes.node_id.isin(node_ids)]
