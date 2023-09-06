@@ -59,9 +59,11 @@ def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, iter_thresh = [0.5,0.5,0.5], 
         new_list = merge_pairs(neurons, output_file, pair_data_iter, thresh)
         neurons = new_list
         
-    #output new swc file    
-    neurons.to_swc(swc_outdir + "reconnected.swc")
-        
+    #output new swc files
+    if not os.path.isdir(swc_outdir + 'reconnected_skeletons'):
+        os.mkdir(swc_outdir + 'reconnected_skeletons')
+    navis.write_swc(neurons, swc_outdir + 'reconnected_skeletons')
+    
     return neurons
             
             

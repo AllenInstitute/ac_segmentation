@@ -422,4 +422,4 @@ class Postprocess(ags.ArgSchemaParser):
         
 if __name__ == "__main__":
     mod = Postprocess(schema_type=PostprocessParameters)
-    mod.run()      
+    mod.run()       
