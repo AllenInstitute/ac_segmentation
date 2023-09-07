@@ -412,7 +412,7 @@ def merge_pairs(neuro_list, outfile, pair_data, thresh):
         if ns[0] in merged_list or ns[1] in merged_list:
             continue
         c = neuro_list[neuro_list.id == [ns[0]]] + neuro_list[neuro_list.id == [ns[1]]]
-        new_neu = navis.stitch_skeletons(c, method='NONE')
+        new_neu = navis.stitch_skeletons(c, method='LEAFS')
         neuro_list = neuro_list[(neuro_list.id != ns[0])]
         neuro_list = neuro_list[(neuro_list.id != ns[1])]
             
