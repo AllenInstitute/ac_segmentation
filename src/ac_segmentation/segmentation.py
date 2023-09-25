@@ -4,6 +4,7 @@ import pandas as pd
 import argschema as ags
 import json
 import tifffile as tif
+import zarr
 from pathlib import Path
 from ac_segmentation.neurotorch.nets.RSUNet import RSUNet
 from ac_segmentation.neurotorch.core.predictor import Predictor

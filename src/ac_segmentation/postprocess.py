@@ -10,6 +10,8 @@ from scipy import ndimage as ndi
 from skimage.morphology import remove_small_objects, skeletonize_3d
 import tifffile as tif
 import kimimaro
+import zarr
+import navis
 from pathlib import Path
 from ac_segmentation.reconnect_stack_navis import reconnect, swc_multi_to_single_subdir
 
@@ -271,7 +273,7 @@ def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box,
         
         #Break and reconnect skeletons
         os.makedirs(pos_dir + "Reconnected/", exist_ok=True)
-        %time skels_rec = reconnect(infile = pos_dir + 'consolidated.swc', \
+        skels_rec = reconnect(infile = pos_dir + 'consolidated.swc', \
                                     swc_outdir = pos_dir + "Reconnected/", cl = cl, sc = sc, xyz_pxl=[1.0,1.0,1.0], \
                                     min_nodes = 10, iter_thresh = iter_thresh, query_dis = match_query_dis)
         
