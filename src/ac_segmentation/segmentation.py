@@ -4,11 +4,13 @@ import pandas as pd
 import argschema as ags
 import json
 import tifffile as tif
+from pathlib import Path
 from ac_segmentation.neurotorch.nets.RSUNet import RSUNet
 from ac_segmentation.neurotorch.core.predictor import Predictor
 from ac_segmentation.neurotorch.datasets.filetypes import TiffVolume
 from ac_segmentation.neurotorch.datasets.dataset import Array
 from ac_segmentation.neurotorch.datasets.datatypes import (BoundingBox, Vector)
+from ac_segmentation.preprocess import lut_preprocess_array
 
 class SegmentationParameters(ags.ArgSchema):
     ckpt = ags.fields.InputFile(required=True, description='Model file')
@@ -17,7 +19,7 @@ class SegmentationParameters(ags.ArgSchema):
     overlap = ags.fields.Int(dtype='int', required=False, default=16)
 
 
-def predict(checkpoint, outdir, mip=0, **kwargs):
+def predict(checkpoint, outdir, **kwargs):
     
     #set default keyword arguments
     defaultKwargs = {'iter_size': BoundingBox(Vector(0, 0, 0), Vector(512, 512, 64)), 'stride': Vector(256, 256, 32),
@@ -48,7 +50,7 @@ def predict(checkpoint, outdir, mip=0, **kwargs):
             
     return num_chunks
     
-def predict_array(checkpoint, outdir, inarr, mip=0, **kwargs):
+def predict_array(checkpoint, outdir, inarr, **kwargs):
     
     #set default keyword arguments
     defaultKwargs = {'output_type': 'volume', 'iter_size': BoundingBox(Vector(0, 0, 0), Vector(512, 512, 64)), 'stride': Vector(256, 256, 32),
@@ -67,12 +69,65 @@ def predict_array(checkpoint, outdir, inarr, mip=0, **kwargs):
     predictor.run(inarr, output_volume, batch_size=kwargs['batch_size'])
     
     if kwargs['output_type'] == 'volume':
-        return output_volume
+        # Convert to probability map and save
+        prob_map = 1/(1+np.exp(-output_volume.getArray()))
+        prob_volume = np.uint8(255*prob_map)
+    
+        return prob_volume
     
     else:
         convert_prob_map(outdir, output_volume, 1)
         return output_volume
 
+
+def predict_zarr_strips(zarr_dir, outdir, strip_range, checkpt_file, z_crop = None,  level = 0, chunk_size = 1024, max_pix = 30000, 
+                           iter_size = [32, 64, 64], stride = [32, 64, 64]):
+
+    for strip in range(strip_range[0], strip_range[1]+1):
+        pos_dir = outdir + 'Pos' + str(strip) + "/"
+        os.makedirs(pos_dir, exist_ok=True)
+
+        #load zarr
+        f_path = zarr_dir + 'highres_Pos' + str(strip)
+        data = zarr.load(f_path)
+        data = data[level]
+
+        #reformat, index, and adjust pixel intensity
+        data = np.transpose(data[0,0,:,:,:])
+        if z_crop != None:
+            data = data[:,:,z_crop[0]:z_crop[1]]
+        data = lut_preprocess_array(data, max_pix)
+
+        #create empty array for output
+        zarr_arr = np.zeros((data.shape[0],data.shape[1],data.shape[2]))
+
+        #chunk image 
+        z_start = list(range(0,data.shape[2],chunk_size))
+        for start in z_start:
+            #index the chunk
+            test_arr = data[:,:,start:start+chunk_size]
+
+            #pad last chunk
+            if test_arr.shape[2] != chunk_size:
+                add = np.zeros((test_arr.shape[0], test_arr.shape[0], chunk_size-test_arr.shape[2]))
+                add[:,:,:] = test_arr.min()
+                test_arr = np.concatenate((test_arr, add), axis=2)
+
+            #run segmentation
+            out_arr = predict_array(checkpt_file, './', test_arr, output_type = 'volume', 
+                                    iter_size= BoundingBox(Vector(0, 0, 0), Vector(iter_size[0], iter_size[1], iter_size[2])), 
+                                    stride = Vector(stride[0], stride[1], stride[2]))
+
+            #add chunk to prepared array
+            try:
+                zarr_arr[:,:,start:start+chunk_size] = out_arr
+            except:
+                zarr_arr[:,:,start:data.shape[2]] = out_arr[:,:,0:data.shape[2]-start] #end chunk, given the padding
+
+        #save array to zarr
+        zarr.save(pos_dir + 'Pos' + str(strip) + '_Segmented.zarr', zarr_arr)
+        print("Position " + str(strip) + " Complete")
+                  
 
 def convert_prob_map(outdir, output_volume, chunk_n):
     savedir = os.path.join(outdir, 'Segmentation')

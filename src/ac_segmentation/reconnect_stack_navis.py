@@ -14,6 +14,7 @@ import copy
 import networkx as nx
 import itertools
 from uuid import UUID
+from pathlib import Path
 
 class ReconnectParameters(ags.ArgSchema):
     input_file = ags.fields.InputFile(required=True, description='Input file')
@@ -22,7 +23,7 @@ class ReconnectParameters(ags.ArgSchema):
     pxl_xyz = ags.fields.NumpyArray(dtype=float, required=False, 
                            default=[0.812,0.812,0.704], description='pxl size in um')
 
-def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, iter_thresh = [0.5,0.5,0.5], resample=2, query_dis=10): 
+def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, min_nodes = 10, iter_thresh = [0.5,0.5,0.5], resample=2, query_dis=10): 
     if not os.path.isdir(swc_outdir):
         os.mkdir(swc_outdir)
     
@@ -33,11 +34,12 @@ def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, iter_thresh = [0.5,0.5,0.5], 
     morph_split = swc_split_branches(morph_prune, os.path.join(swc_outdir, 'segments.swc'), 9)
     morph_sort = sort_swc(morph_split, os.path.join(swc_outdir, 'segments.swc'))
     
-    # Upsample swc
+    # Upsample and smooth skeletons
     upsample = navis.resample_skeleton(morph_sort, resample_to=resample)
+    smooth = navis.smooth_skeleton(upsample,window=5)
     
     # Extract neuronlist from nodelist
-    neurons = extract_neuronlist(upsample, 0)
+    neurons = extract_neuronlist(smooth, min_nodes)
     
     # Model pxl
     model_pxl = np.array([0.207,0.207,0.6])
@@ -56,7 +58,7 @@ def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, iter_thresh = [0.5,0.5,0.5], 
         
         # Merge segment pairs with prob below thresh
         output_file = os.path.join(swc_outdir, 'connect_iter%d.swc'%num_iter) 
-        new_list = merge_pairs(neurons, output_file, pair_data_iter, thresh)
+        new_list = merge_pairs(neurons, pair_data_iter, thresh)
         neurons = new_list
         
     #output new swc files
@@ -108,7 +110,30 @@ def swc_multi_to_single(dirname, fname):
             trace_new = trace_i
         else:
             trace_new = np.concatenate((trace_new, trace_i))
-    save_swc(os.path.join(dirname,fname), trace_new)          
+    save_swc(os.path.join(dirname,fname), trace_new)
+    
+
+def swc_multi_to_single_subdir(dirname, out_path): #this version pulls all SWCs from subdirectories as well
+    files = list(Path(dirname).rglob("*.swc" ))
+    file_list = [str("./")+str(i) for i in files]
+    file_list.sort()
+    trace_list = []
+    for f in file_list:
+        trace = load_swc(f)
+        trace_list.append(trace)
+    offset = 0
+    for i, trace in enumerate(trace_list):
+        select = np.where(trace[:,-1]!=-1)[0]  
+        trace_i = np.copy(trace)
+        min_id = np.min(trace_i[:,0])
+        trace_i[:,0] = trace_i[:,0] + offset - min_id + 1
+        trace_i[select,-1] = trace_i[select, -1] + offset - min_id + 1
+        offset = np.max(trace_i[:,0])
+        if i == 0:
+            trace_new = trace_i
+        else:
+            trace_new = np.concatenate((trace_new, trace_i))
+    save_swc(out_path, trace_new)                    
 
 
 
@@ -382,7 +407,7 @@ def collinearity(ns, end_node_ids, num_nodes=(4, 49)):
     return cf
 
 
-def merge_pairs(neuro_list, outfile, pair_data, thresh): 
+def merge_pairs(neuro_list, pair_data, thresh): 
     pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < 0.5)[0])==0) and (x[1][0] > thresh))]
     merged_list = []
     
@@ -415,15 +440,17 @@ def merge_pairs(neuro_list, outfile, pair_data, thresh):
         new_neu = navis.stitch_skeletons(c, method='LEAFS')
         neuro_list = neuro_list[(neuro_list.id != ns[0])]
         neuro_list = neuro_list[(neuro_list.id != ns[1])]
-            
         neuro_list.append(new_neu)
         merged_list += [ns[0]] + [ns[1]]
         
-    #reset soma to none
+    #reset soma to none, and fix end nodes
     for neu in neuro_list:
         neu.soma = None
-        
-                  
+        #reroot so the root node isn't between the two merged skeletons
+        if len(neu.nodes[neu.nodes['type'] == 'end']) > 1:
+            ends = neu.nodes.loc[neu.nodes['type'] == 'end']
+            neu.reroot(ends.iloc[1]['node_id'], inplace=True)
+                 
     print("Number of Pairs: " + str(int(len(merged_list)/2)))
     return neuro_list
 
@@ -455,13 +482,14 @@ def find_pairs(neuro_list, sc, cl, query_dis=15):
         candidate_neuron_idxs = endpts_neuron_idx[[p, q]]
         candidate_neurons = neuro_list[candidate_neuron_idxs]
         candidate_end_node_ids = endpts_node_id[[p, q]]
-        
+    
         try:
-            cf = subfeat[str(candidate_end_node_ids[0])  + str(candidate_end_node_ids[1])]
+            cf = subfeat[str(candidate_neurons.name)]
             
         except:
             cf = tuple(calculate_feature(candidate_neurons, candidate_end_node_ids))
-            subfeat[str(candidate_end_node_ids[0]) + str(candidate_end_node_ids[1])] = cf
+            subfeat[str(candidate_neurons.name)] = cf
+        
         f += cf
 
         p_neuron, q_neuron = candidate_neurons
@@ -479,14 +507,15 @@ def find_pairs(neuro_list, sc, cl, query_dis=15):
             for end_node_id in endpts_node_id[p_knn_idxs]
         ]
         
+        
         for nn_neurons, nn_end_node_ids  in zip(p_knn_neurons, p_knn_end_node_ids):
-            
             try:
-                cf = subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])]
+                cf = subfeat[str(nn_neurons[0].name) + str(nn_neurons[1].name)]
                 
             except:
                 cf = tuple(calculate_feature(nn_neurons, nn_end_node_ids))
-                subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])] = cf
+                subfeat[str(nn_neurons[0].name) + str(nn_neurons[1].name)] = cf
+                
             f += cf
             
         # features from pairing q with next nearest neighbors
@@ -502,16 +531,17 @@ def find_pairs(neuro_list, sc, cl, query_dis=15):
 
         for nn_neurons, nn_end_node_ids  in zip(q_knn_neurons, q_knn_end_node_ids):
             try:
-                cf = subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])]
+                cf = subfeat[str(nn_neurons[0].name) + str(nn_neurons[1].name)]
                 
             except:
                 cf = tuple(calculate_feature(nn_neurons, nn_end_node_ids))
-                subfeat[str(nn_end_node_ids[0]) + str(nn_end_node_ids[1])] = cf
+                subfeat[str(nn_neurons[0].name) + str(nn_neurons[1].name)] = cf
+        
             f += cf
         
-         #calculate probability
+        #calculate probability
         f = np.array(f)
-        #weird error in reconnect function with na in some f arrays
+        #weird error in reconnect function with na in f array
         f[np.isnan(f)] = 0
         x = sc.transform(f.reshape(1,-1))
 
@@ -530,8 +560,11 @@ def extract_neuronlist(morph_in, node_min):
     
     trees = morph_in.subtrees
     res = Parallel(n_jobs=4)(delayed(ind_neuron)(tree) for tree in trees if len(tree) >= node_min)
-
-    return navis.NeuronList(res)
+    neurons = navis.NeuronList(res)
+    for neu in neurons:
+        neu.name = neu.id
+    
+    return neurons
 
 def get_bfs_neighbor_nodes(n, node_id, num_nodes):
     node_type = n.nodes[n.nodes.node_id == node_id].type.values[0]

@@ -10,6 +10,8 @@ from scipy import ndimage as ndi
 from skimage.morphology import remove_small_objects, skeletonize_3d
 import tifffile as tif
 import kimimaro
+from pathlib import Path
+from ac_segmentation.reconnect_stack_navis import reconnect, swc_multi_to_single_subdir
 
 class PostprocessParameters(ags.ArgSchema):
     output_dir = ags.fields.OutputDir(required=True, description='Output directory')
@@ -102,7 +104,7 @@ def postprocess(outdir, chunk_size, overlap, threshold=0.2, size_threshold=2000)
                     print('error')
 
 
-def postprocess_kimi(outdir, bound_box, chunk_size, overlap, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
+def postprocess_kimi_stack(outdir, bound_box, overlap, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
     chunks = [name for name in os.listdir(os.path.join(outdir, 'Segmentation')) if name.startswith('chunk') == True]
     
     #set default keyword arguments
@@ -172,6 +174,112 @@ def postprocess_kimi(outdir, bound_box, chunk_size, overlap, threshold=0.2, size
             skels[key].vertices = skels[key].vertices[:, [2, 1,0]]
             with open(outdir + '/swc_files_KIMI/' + str(skels[key].id).zfill(4) + '.swc', 'wt') as f:
                 f.write(skels[key].to_swc())  
+                
+def postprocess_kimi_array(outdir, stack, bound_box, overlap, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
+    
+    #set default keyword arguments
+    defaultKwargs = {'scale': 2, 'constant': 5, 'fill_holes' : False, 'parallel': 1, 'dust_threshold' : 10}
+    kwargs = { **defaultKwargs, **kwargs }
+    
+    savedir = os.path.join(outdir, 'swc_files_KIMI')
+    if not os.path.isdir(savedir):
+        os.mkdir(savedir)
+        
+    # Crop stack to original size 
+    new_stack_size = bound_box[2], bound_box[1], bound_box[0]  #zyx
+    stack = stack[0:new_stack_size[0],0:new_stack_size[1],0:new_stack_size[2]]
+    stack_size = stack.shape
+
+    # Zero values below threshold
+    stack[stack <= int(np.round(255*threshold))] = 0
+        
+    # Binarize stack based on threshold
+    stack = (stack > int(np.round(255*threshold))).astype(np.uint8)
+
+    # Label connected components
+    s = ndi.generate_binary_structure(3,3)
+    stack = ndi.label(stack,structure=s)[0].astype(np.uint16)
+    num_cc = np.max(stack)
+
+    if num_cc != 0:
+        # Remove components smaller than size_threshold 
+        stack = remove_small_objects(stack, min_size=size_threshold, connectivity=3)
+        unique_labels, counts = np.unique(stack,return_counts=True)
+            
+        skels = kimimaro.skeletonize(
+            stack, 
+            teasar_params={
+            "scale": kwargs['scale'], 
+            "const": kwargs['constant'], # influences the finger branches allowed
+            "pdrf_scale": 10000,
+            "pdrf_exponent": 1,
+            "soma_acceptance_threshold": 3500, # physical units
+            "soma_detection_threshold": 750, # physical units
+            "soma_invalidation_const": 300, # physical units
+            "soma_invalidation_scale": 2,
+            "max_paths": 50, # default None
+            },
+            dust_threshold=kwargs['dust_threshold'], # skip connected components with fewer than this many voxels
+            anisotropy=(1,1,1), # default True #influences the dimension scale
+            fix_branching=True, # default True
+            fix_borders=True, # default True
+            fill_holes=kwargs['fill_holes'], # default False
+            fix_avocados=False, # default False
+            progress=True, # default False, show progress bar
+            parallel=kwargs['parallel'], # <= 0 all cpu, 1 single process, 2+ multiprocess
+            parallel_chunk_size=1, # how many skeletons to process before updating progress bar
+        )
+            
+    for key in skels.keys(): 
+        skels[key].vertices = skels[key].vertices[:, [2, 1,0]]
+        with open(outdir + '/swc_files_KIMI/' + str(skels[key].id).zfill(4) + '.swc', 'wt') as f:
+            f.write(skels[key].to_swc())  
+            
+def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box, chunk_size = 1024, 
+                            iter_thresh = [0.1,0.1,0.1,0.1,0.1], match_query_dis = 20):
+    
+    for strip in range(strip_range[0], strip_range[1]+1):
+        pos_dir = in_dir + 'Pos' + str(strip) + "/"
+        seg_data = zarr.open(pos_dir + 'Pos' + str(strip) + '_Segmented.zarr')
+        
+        #chunk image and skeletonize
+        z_start = list(range(0,seg_data.shape[2],chunk_size))
+        
+        for start in z_start:
+            os.makedirs(pos_dir + 'chunk' + str(start), exist_ok=True)
+            #index the zarr
+            test_arr = seg_data[:,:,start:start+chunk_size]
+            try:
+                postprocess_kimi_array(outdir = pos_dir + 'chunk' + str(start), stack = test_arr, bound_box = [bound_box[2], bound_box[1], bound_box[0]], chunk_size = [512, 512, 64], overlap = [512, 512, 64], threshold=0.2, size_threshold=1000, check_rad=True)
+            except:
+                print('chunk' + str(start) + " Has no skeletons")
+                
+            #adjust z coordinates to reflect original places in volume, transpose to original xyz space
+            skel_dir = pos_dir + 'chunk' + str(start) + "/swc_files_KIMI/"
+            skels = os.listdir(skel_dir)
+            
+            for sk_name in skels:
+                s = navis.read_swc(skel_dir + sk_name)
+                s.nodes['x'] = s.nodes['x'] + float(start)
+                s.nodes = s.nodes.rename(columns={"x": "z", "z": "x"})
+                navis.write_swc(s, skel_dir + sk_name)
+                os.rename(skel_dir + sk_name, skel_dir + 'chunk' + str(start) + '_' + sk_name)
+
+        #Convert all SWCs to a single SWC
+        all_skel = navis.read_swc(pos_dir, include_subdirs=True)
+        swc_multi_to_single_subdir(pos_dir, pos_dir + 'consolidated.swc' )
+        
+        #Break and reconnect skeletons
+        os.makedirs(pos_dir + "Reconnected/", exist_ok=True)
+        %time skels_rec = reconnect(infile = pos_dir + 'consolidated.swc', \
+                                    swc_outdir = pos_dir + "Reconnected/", cl = cl, sc = sc, xyz_pxl=[1.0,1.0,1.0], \
+                                    min_nodes = 10, iter_thresh = iter_thresh, query_dis = match_query_dis)
+        
+        #Convert all SWCs to a single SWC
+        swc_multi_to_single_subdir(pos_dir + "Reconnected/reconnected_skeletons/",\
+                                   outdir + "Skeletons/Pos" + str(strip) + "_Skels.swc" ) 
+        
+        print("Position " + str(strip) + " Complete!")
             
 def load_stack(dirname):
     # Load image stack filenames
