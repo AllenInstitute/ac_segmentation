@@ -23,7 +23,7 @@ class ReconnectParameters(ags.ArgSchema):
     pxl_xyz = ags.fields.NumpyArray(dtype=float, required=False, 
                            default=[0.812,0.812,0.704], description='pxl size in um')
 
-def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, min_nodes = 10, iter_thresh = [0.5,0.5,0.5], resample=2, query_dis=10): 
+def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, min_nodes = 10, iter_thresh = [0.5,0.5,0.5], resample=2, query_dis=10, min_collin=None): 
     if not os.path.isdir(swc_outdir):
         os.mkdir(swc_outdir)
     
@@ -49,7 +49,7 @@ def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, min_nodes = 10, iter_thresh =
         print('num_iter', num_iter, 'thresh', thresh)
         
         # Find pairs
-        pair_data_iter = find_pairs(neurons, sc, cl, query_dis=query_dis)
+        pair_data_iter = find_pairs(neurons, sc, cl, query_dis=query_dis, min_collin=min_collin)
         
         # Save pair_data as csv file
         df1 = pd.DataFrame.from_dict(pair_data_iter)
@@ -115,7 +115,7 @@ def swc_multi_to_single(dirname, fname):
 
 def swc_multi_to_single_subdir(dirname, out_path): #this version pulls all SWCs from subdirectories as well
     files = list(Path(dirname).rglob("*.swc" ))
-    file_list = [str("./")+str(i) for i in files]
+    file_list = [str(i) for i in files]
     file_list.sort()
     trace_list = []
     for f in file_list:
@@ -454,7 +454,7 @@ def merge_pairs(neuro_list, pair_data, thresh):
     print("Number of Pairs: " + str(int(len(merged_list)/2)))
     return neuro_list
 
-def find_pairs(neuro_list, sc, cl, query_dis=15):    
+def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = None):    
     #find end nodes and just roots nodes
     pts = neuro_list.nodes[neuro_list.nodes['type'].isin(['root', 'end'])]
     roots = list(pts[pts['type'].isin(['root'])]['node_id'])
@@ -489,6 +489,10 @@ def find_pairs(neuro_list, sc, cl, query_dis=15):
         except:
             cf = tuple(calculate_feature(candidate_neurons, candidate_end_node_ids))
             subfeat[str(candidate_neurons.name)] = cf
+            
+        #skip pair if collinearity too low
+        if len(np.where(np.array(cf[1:5]) < min_collin)[0]) > 0:
+            continue
         
         f += cf
 

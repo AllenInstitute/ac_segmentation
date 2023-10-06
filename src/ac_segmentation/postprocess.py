@@ -238,7 +238,7 @@ def postprocess_kimi_array(outdir, stack, bound_box, overlap, threshold=0.2, siz
             f.write(skels[key].to_swc())  
             
 def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box, chunk_size = 1024, 
-                            iter_thresh = [0.1,0.1,0.1,0.1,0.1], match_query_dis = 20):
+                            iter_thresh = [0.1,0.1,0.1,0.1,0.1], match_query_dis = 20, min_collin=0.1, size_thresh = 500, thresh = 0.05):
     
     for strip in range(strip_range[0], strip_range[1]+1):
         pos_dir = in_dir + 'Pos' + str(strip) + "/"
@@ -252,7 +252,7 @@ def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box,
             #index the zarr
             test_arr = seg_data[:,:,start:start+chunk_size]
             try:
-                postprocess_kimi_array(outdir = pos_dir + 'chunk' + str(start), stack = test_arr, bound_box = [bound_box[2], bound_box[1], bound_box[0]], chunk_size = [512, 512, 64], overlap = [512, 512, 64], threshold=0.2, size_threshold=1000, check_rad=True)
+                postprocess_kimi_array(outdir = pos_dir + 'chunk' + str(start), stack = test_arr, bound_box = [bound_box[2], bound_box[1], bound_box[0]], chunk_size = [512, 512, 64], overlap = [512, 512, 64], threshold=thresh, size_threshold=size_thresh, check_rad=True)
             except:
                 print('chunk' + str(start) + " Has no skeletons")
                 
@@ -275,9 +275,10 @@ def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box,
         os.makedirs(pos_dir + "Reconnected/", exist_ok=True)
         skels_rec = reconnect(infile = pos_dir + 'consolidated.swc', \
                                     swc_outdir = pos_dir + "Reconnected/", cl = cl, sc = sc, xyz_pxl=[1.0,1.0,1.0], \
-                                    min_nodes = 10, iter_thresh = iter_thresh, query_dis = match_query_dis)
+                                    min_nodes = 10, iter_thresh = iter_thresh, query_dis = match_query_dis, min_collin=min_collin)
         
         #Convert all SWCs to a single SWC
+        os.makedirs(out_dir + "Skeletons/", exist_ok=True)
         swc_multi_to_single_subdir(pos_dir + "Reconnected/reconnected_skeletons/",\
                                    outdir + "Skeletons/Pos" + str(strip) + "_Skels.swc" ) 
         
