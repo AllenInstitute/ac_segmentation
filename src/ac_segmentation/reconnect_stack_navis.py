@@ -23,48 +23,31 @@ class ReconnectParameters(ags.ArgSchema):
     pxl_xyz = ags.fields.NumpyArray(dtype=float, required=False, 
                            default=[0.812,0.812,0.704], description='pxl size in um')
 
-def reconnect(infile, swc_outdir, cl, sc, xyz_pxl, min_nodes = 10, iter_thresh = [0.5,0.5,0.5], resample=2, query_dis=10, min_collin=None): 
+def reconnect(infile, swc_outdir, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=2, query_dis=10, min_collin=.1): 
     if not os.path.isdir(swc_outdir):
         os.mkdir(swc_outdir)
     
-    # Prune short branches 
-    morph_prune = swc_prune(navis.read_swc(infile), os.path.join(swc_outdir, 'pruned.swc'), pruning_threshold = 15)
-    
-    # Split branches and save all segments as a single file
-    morph_split = swc_split_branches(morph_prune, os.path.join(swc_outdir, 'segments.swc'), 9)
-    morph_sort = sort_swc(morph_split, os.path.join(swc_outdir, 'segments.swc'))
+    # Split branches 
+    morph_split = swc_split_branches(navis.read_swc(infile), os.path.join(swc_outdir, 'segments.swc'), 9)
     
     # Upsample and smooth skeletons
-    upsample = navis.resample_skeleton(morph_sort, resample_to=resample)
-    smooth = navis.smooth_skeleton(upsample,window=5)
+    resample = navis.resample_skeleton(morph_split, resample_to=resample)
+    smooth = navis.smooth_skeleton(resample, window=5)
     
     # Extract neuronlist from nodelist
     neurons = extract_neuronlist(smooth, min_nodes)
-    
-    # Model pxl
-    model_pxl = np.array([0.207,0.207,0.6])
-    xyz_pxl = np.array(xyz_pxl)*np.mean(model_pxl/xyz_pxl)
-    
-    for num_iter, thresh in enumerate(iter_thresh):     
-        print('num_iter', num_iter, 'thresh', thresh)
         
-        # Find pairs
-        pair_data_iter = find_pairs(neurons, sc, cl, query_dis=query_dis, min_collin=min_collin)
+    # Find pairs
+    pair_data_iter = find_pairs(neurons, sc, cl, query_dis=query_dis, min_collin=min_collin)
         
-        # Save pair_data as csv file
-        df1 = pd.DataFrame.from_dict(pair_data_iter)
-        csv_file = os.path.join(swc_outdir, 'pair_dict_iter%d.csv'%num_iter)
-        df1.to_csv(csv_file, index=False)
-        
-        # Merge segment pairs with prob below thresh
-        output_file = os.path.join(swc_outdir, 'connect_iter%d.swc'%num_iter) 
-        new_list = merge_pairs(neurons, pair_data_iter, thresh)
-        neurons = new_list
+    # Merge segment pairs with prob above thresh
+    output_file = os.path.join(swc_outdir, 'connect_iter.swc') 
+    out_neurons = merge_pairs(neurons, pair_data_iter, prob_thresh)
         
     #output new swc files
     if not os.path.isdir(swc_outdir + 'reconnected_skeletons'):
         os.mkdir(swc_outdir + 'reconnected_skeletons')
-    navis.write_swc(neurons, swc_outdir + 'reconnected_skeletons')
+    navis.write_swc(out_neurons, swc_outdir + 'reconnected_skeletons')
     
     return neurons
             
@@ -409,52 +392,35 @@ def collinearity(ns, end_node_ids, num_nodes=(4, 49)):
 
 def merge_pairs(neuro_list, pair_data, thresh): 
     pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < 0.5)[0])==0) and (x[1][0] > thresh))]
-    merged_list = []
+    merge_num = 0
     
     #remove duplicates based on highest probability
-    ids1 = [x[0][0] for x in pair_data]
-    count1 = dict(Counter(ids1))
-    for i,j in count1.items():
-        if j > 1:
-            id_same = [x for x in pair_data if x[0][0] == i]
-            prob = [x[1][0] for x in id_same]
-            rem = [i for i in id_same if i[1][0] < max(prob)]
-            for item in rem:
-                pair_data = [i for i in pair_data if i[0] != item[0]]
-                
-    ids2 = [x[0][1] for x in pair_data]
-    count2 = dict(Counter(ids2))
-    for i,j in count2.items():
-        if j > 1:
-            id_same = [x for x in pair_data if x[0][1] == i]
-            prob = [x[1][0] for x in id_same]
-            rem = [i for i in id_same if i[1][0] < max(prob)]
-            for item in rem:
-                pair_data = [i for i in pair_data if i[0] != item[0]]
-    
-    #merge pairs, but skip any that have already been merged
-    for ns,c_feat in pair_data:
-        if ns[0] in merged_list or ns[1] in merged_list:
-            continue
-        c = neuro_list[neuro_list.id == [ns[0]]] + neuro_list[neuro_list.id == [ns[1]]]
-        new_neu = navis.stitch_skeletons(c, method='LEAFS')
-        neuro_list = neuro_list[(neuro_list.id != ns[0])]
-        neuro_list = neuro_list[(neuro_list.id != ns[1])]
+    pair_data  = pd.DataFrame([list(i[0]) + list(i[1]) for i in pair_data])
+    pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(0).sort_index()
+    pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(1).sort_index()
+
+    #create graph object with pairs
+    pairs = [(row[0],row[1]) for ind,row in pair_data .iterrows()]
+    G = nx.Graph() 
+    G.add_edges_from(pairs)
+    cc = list(nx.connected_components(G))
+    for com in cc:
+        merge_num += len(com)-1
+        group = []
+        for neu in com:
+            group.append(neuro_list[neuro_list.id == neu[0]])
+            neuro_list = neuro_list[(neuro_list.id != neu[0])]
+        new_neu = navis.stitch_skeletons(group, method='LEAFS')
         neuro_list.append(new_neu)
-        merged_list += [ns[0]] + [ns[1]]
         
-    #reset soma to none, and fix end nodes
+    #reset soma to none
     for neu in neuro_list:
         neu.soma = None
-        #reroot so the root node isn't between the two merged skeletons
-        if len(neu.nodes[neu.nodes['type'] == 'end']) > 1:
-            ends = neu.nodes.loc[neu.nodes['type'] == 'end']
-            neu.reroot(ends.iloc[1]['node_id'], inplace=True)
-                 
-    print("Number of Pairs: " + str(int(len(merged_list)/2)))
+        
+    print('Pairs Merged: ', merge_num)
     return neuro_list
 
-def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = None):    
+def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1):    
     #find end nodes and just roots nodes
     pts = neuro_list.nodes[neuro_list.nodes['type'].isin(['root', 'end'])]
     roots = list(pts[pts['type'].isin(['root'])]['node_id'])
@@ -550,7 +516,8 @@ def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = None):
         x = sc.transform(f.reshape(1,-1))
 
         prob = cl.predict_proba(x)[0][1]
-        pair_features[endpts_neuron_id[p],endpts_neuron_id[q]] = np.insert(f, 0, prob)
+        pair_features[ (endpts_neuron_id[p],endpts_node_id[p]), (endpts_neuron_id[q], endpts_node_id[q])] = np.insert(f, 0, prob)
+
 
     pair_features = list(pair_features.items())
     return pair_features

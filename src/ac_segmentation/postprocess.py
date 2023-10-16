@@ -13,6 +13,7 @@ import kimimaro
 import zarr
 import navis
 from pathlib import Path
+import colorsys
 from ac_segmentation.reconnect_stack_navis import reconnect, swc_multi_to_single_subdir
 
 class PostprocessParameters(ags.ArgSchema):
@@ -283,6 +284,23 @@ def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box,
                                    outdir + "Skeletons/Pos" + str(strip) + "_Skels.swc" ) 
         
         print("Position " + str(strip) + " Complete!")
+        
+        
+def get_skeleton_orient(swc_path, min_node):
+    skels = navis.read_swc(swc_path)
+    skels = extract_neuronlist(skels, min_node) 
+    for skel in skels:
+        skel.name = None
+    
+    #extract orientation from dotprop and add as column attribute to neuronlist
+    new_nl = []
+    for ex_sk in skels:
+        ex_sm_sk = ex_sk.copy()
+        ex_sm_dp = navis.make_dotprops(ex_sk)
+        ex_sm_sk.nodes["hsv"] = [colorsys.rgb_to_hsv(*(vec))[0] for vec in ex_sm_dp.vect+1]
+        new_nl.append(ex_sm_sk)
+    new_nl = navis.NeuronList(new_nl)
+    return new_nl
             
 def load_stack(dirname):
     # Load image stack filenames
