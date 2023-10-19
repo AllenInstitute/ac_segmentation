@@ -14,6 +14,9 @@ import zarr
 import navis
 from pathlib import Path
 import colorsys
+import concurrent
+from concurrent.futures import ThreadPoolExecutor
+import tarfile
 from ac_segmentation.reconnect_stack_navis import reconnect, swc_multi_to_single_subdir
 
 class PostprocessParameters(ags.ArgSchema):
