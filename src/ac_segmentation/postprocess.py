@@ -106,77 +106,6 @@ def postprocess(outdir, chunk_size, overlap, threshold=0.2, size_threshold=2000)
                 except:
                     print('error')
 
-
-def postprocess_kimi_stack(outdir, bound_box, overlap, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
-    chunks = [name for name in os.listdir(os.path.join(outdir, 'Segmentation')) if name.startswith('chunk') == True]
-    
-    #set default keyword arguments
-    defaultKwargs = {'scale': 2, 'constant': 5, 'fill_holes' : False, 'parallel': 1, 'dust_threshold' : 10}
-    kwargs = { **defaultKwargs, **kwargs }
-    
-    savedir = os.path.join(outdir, 'swc_files_KIMI')
-    if not os.path.isdir(savedir):
-        os.mkdir(savedir)
-    
-    for folder in chunks:
-        stack = load_stack(os.path.join(outdir, 'Segmentation', folder))
-        
-        # Crop stack to original size 
-        new_stack_size = bound_box[2], bound_box[1], bound_box[0]  #zyx
-        stack = stack[0:new_stack_size[0],0:new_stack_size[1],0:new_stack_size[2]]
-        stack_size = stack.shape
-
-        # Zero values below threshold
-        stack[stack <= int(np.round(255*threshold))] = 0
-        
-        # Save nonzero pixels as csv file (x,y,z,I)
-        z,y,x = np.nonzero(stack)
-        I = stack[z,y,x]
-        np.savetxt(os.path.join(outdir, 'Segmentation', 'nonzero_pix.csv'), 
-                   np.stack((x,y,z,I), axis=1), fmt='%u', delimiter=',', header='x,y,z,I')
-        
-        # Binarize stack based on threshold
-        stack = (stack > int(np.round(255*threshold))).astype(np.uint8)
-
-        # Label connected components
-        s = ndi.generate_binary_structure(3,3)
-        stack = ndi.label(stack,structure=s)[0].astype(np.uint16)
-        num_cc = np.max(stack)
-
-        if num_cc != 0:
-            # Remove components smaller than size_threshold 
-            stack = remove_small_objects(stack, min_size=size_threshold, connectivity=3)
-            unique_labels, counts = np.unique(stack,return_counts=True)
-            
-            skels = kimimaro.skeletonize(
-              stack, 
-              teasar_params={
-                "scale": kwargs['scale'], 
-                "const": kwargs['constant'], # influences the finger branches allowed
-                "pdrf_scale": 10000,
-                "pdrf_exponent": 1,
-                "soma_acceptance_threshold": 3500, # physical units
-                "soma_detection_threshold": 750, # physical units
-                "soma_invalidation_const": 300, # physical units
-                "soma_invalidation_scale": 2,
-                "max_paths": 50, # default None
-              },
-              dust_threshold=kwargs['dust_threshold'], # skip connected components with fewer than this many voxels
-              anisotropy=(1,1,1), # default True #influences the dimension scale
-              fix_branching=True, # default True
-              fix_borders=True, # default True
-              fill_holes=kwargs['fill_holes'], # default False
-              fix_avocados=False, # default False
-              progress=True, # default False, show progress bar
-              parallel=kwargs['parallel'], # <= 0 all cpu, 1 single process, 2+ multiprocess
-              parallel_chunk_size=1, # how many skeletons to process before updating progress bar
-            )
-            
-        for key in skels.keys():
-            
-            skels[key].vertices = skels[key].vertices[:, [2, 1,0]]
-            with open(outdir + '/swc_files_KIMI/' + str(skels[key].id).zfill(4) + '.swc', 'wt') as f:
-                f.write(skels[key].to_swc())  
                 
 def postprocess_kimi_array(outdir, stack, bound_box, overlap, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
     
@@ -238,35 +167,18 @@ def postprocess_kimi_array(outdir, stack, bound_box, overlap, threshold=0.2, siz
         with open(outdir + '/swc_files_KIMI/' + str(skels[key].id).zfill(4) + '.swc', 'wt') as f:
             f.write(skels[key].to_swc())  
             
-def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box, chunk_size = 1024, 
-                            iter_thresh = [0.1,0.1,0.1,0.1,0.1], match_query_dis = 20, min_collin=0.1, size_thresh = 500, thresh = 0.05):
+def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box,
+                            prob_thresh = 0.1, match_query_dis = 20, min_collin=0.1, size_thresh = 500, thresh = 0.05):
     
     for strip in range(strip_range[0], strip_range[1]+1):
         pos_dir = in_dir + 'Pos' + str(strip) + "/"
         seg_data = zarr.open(pos_dir + 'Pos' + str(strip) + '_Segmented.zarr')
+        test_arr = np.transpose(seg_data)
         
-        #chunk image and skeletonize
-        z_start = list(range(0,seg_data.shape[2],chunk_size))
-        
-        for start in z_start:
-            os.makedirs(pos_dir + 'chunk' + str(start), exist_ok=True)
-            #index the zarr
-            test_arr = seg_data[:,:,start:start+chunk_size]
-            try:
-                postprocess_kimi_array(outdir = pos_dir + 'chunk' + str(start), stack = test_arr, bound_box = [bound_box[2], bound_box[1], bound_box[0]], chunk_size = [512, 512, 64], overlap = [512, 512, 64], threshold=thresh, size_threshold=size_thresh, check_rad=True)
-            except:
-                print('chunk' + str(start) + " Has no skeletons")
-                
-            #adjust z coordinates to reflect original places in volume, transpose to original xyz space
-            skel_dir = pos_dir + 'chunk' + str(start) + "/swc_files_KIMI/"
-            skels = os.listdir(skel_dir)
-            
-            for sk_name in skels:
-                s = navis.read_swc(skel_dir + sk_name)
-                s.nodes['x'] = s.nodes['x'] + float(start)
-                s.nodes = s.nodes.rename(columns={"x": "z", "z": "x"})
-                navis.write_swc(s, skel_dir + sk_name)
-                os.rename(skel_dir + sk_name, skel_dir + 'chunk' + str(start) + '_' + sk_name)
+        #run skeletonization
+        postprocess_kimi_array(outdir = pos_dir, stack = test_arr, bound_box = [bound_box[0], bound_box[1], bound_box[2]], chunk_size = [512, 512, 64], overlap = [512, 512, 64], threshold=thresh, size_threshold=size_thresh, check_rad=True)
+        skel_dir = pos_dir + "/swc_files_KIMI/"
+        skels = os.listdir(skel_dir)
 
         #Convert all SWCs to a single SWC
         all_skel = navis.read_swc(pos_dir, include_subdirs=True)
@@ -275,11 +187,11 @@ def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box,
         #Break and reconnect skeletons
         os.makedirs(pos_dir + "Reconnected/", exist_ok=True)
         skels_rec = reconnect(infile = pos_dir + 'consolidated.swc', \
-                                    swc_outdir = pos_dir + "Reconnected/", cl = cl, sc = sc, xyz_pxl=[1.0,1.0,1.0], \
-                                    min_nodes = 10, iter_thresh = iter_thresh, query_dis = match_query_dis, min_collin=min_collin)
+                                    swc_outdir = pos_dir + "Reconnected/", cl = cl, sc = sc, \
+                                    min_nodes = 10, prob_thresh = prob_thresh, query_dis = match_query_dis, min_collin=min_collin)
         
         #Convert all SWCs to a single SWC
-        os.makedirs(out_dir + "Skeletons/", exist_ok=True)
+        os.makedirs(outdir + "Skeletons/", exist_ok=True)
         swc_multi_to_single_subdir(pos_dir + "Reconnected/reconnected_skeletons/",\
                                    outdir + "Skeletons/Pos" + str(strip) + "_Skels.swc" ) 
         
@@ -301,6 +213,50 @@ def get_skeleton_orient(swc_path, min_node):
         new_nl.append(ex_sm_sk)
     new_nl = navis.NeuronList(new_nl)
     return new_nl
+    
+    
+def combine_skels_strips(indir, outdir, y_overlap, im_dim, node_min = 10):
+    #get tar files and sort
+    files = glob.glob(indir + "*.gz")
+    files.sort()
+    #create overlap volume
+    poly = Polygon([(0, 0), (0, im_dim[1] - abs(y_overlap)), (im_dim[2], im_dim[1] - abs(y_overlap)), (im_dim[2], 0)])
+    out_sk = []
+    for num, file in enumerate(files):
+        skels = read_navis_neurons_tar(file)
+        for sk in skels:
+            #skip if skeleton is less than node_min
+            if len(sk.nodes) < node_min: 
+                continue
+            #drop all nodes inside overlap volume
+            drop =  pd.DataFrame([row for index, row in sk.nodes.iterrows() if poly.contains(Point(row['z'], row['y'])) == True])
+            if not drop.empty:
+                drop_nodes = list(drop['node_id'])
+                sk.nodes['parent_id'] = sk.nodes['parent_id'].replace(drop_nodes,-1)
+                sk.nodes = sk.nodes[~sk.nodes['node_id'].isin(drop_nodes)]
+                sk.nodes['y'] = sk.nodes['y'] + (num*y_overlap)
+            if len(sk.nodes) == 0:
+                continue
+            out_sk.append(sk)
+    out_sk = navis.NeuronList(out_sk)
+    temp_dir = outdir + "Temp/"
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        navis.write_swc(out_sk, temp_dir)
+        swc_multi_to_single_subdir(temp_dir, outdir + 'Strips_Consolidated.swc')
+        
+def read_navis_neurons_tar(tar_fn, concurrency=10, preprocess_func=None):
+    preprocess_func = ((lambda x: x) if preprocess_func is None else preprocess_func)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=concurrency) as e:
+        futs = []
+        with tarfile.open(tar_fn, "r:gz") as t:
+            for m in t.getmembers():
+                swc_b = t.extractfile(m).read()
+                futs.append(e.submit(navis.io.read_swc, swc_b.decode()))
+        navis_neurons = navis.NeuronList([
+            preprocess_func(fut.result()) for
+            fut in concurrent.futures.as_completed(futs)])
+    return navis_neurons
             
 def load_stack(dirname):
     # Load image stack filenames

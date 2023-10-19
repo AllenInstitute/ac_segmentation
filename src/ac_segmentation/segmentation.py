@@ -81,8 +81,8 @@ def predict_array(checkpoint, outdir, inarr, **kwargs):
         return output_volume
 
 
-def predict_zarr_strips(zarr_dir, outdir, strip_range, checkpt_file, z_crop = None,  level = 0, chunk_size = 1024, max_pix = 30000, 
-                           iter_size = [32, 64, 64], stride = [32, 64, 64]):
+def predict_zarr_strips(zarr_dir, outdir, strip_range, checkpt_file, z_crop = None,  level = 0, max_pix = 30000, 
+                           iter_size = [32, 32, 32], stride = [64, 64, 64]):
 
     for strip in range(strip_range[0], strip_range[1]+1):
         pos_dir = outdir + 'Pos' + str(strip) + "/"
@@ -102,31 +102,13 @@ def predict_zarr_strips(zarr_dir, outdir, strip_range, checkpt_file, z_crop = No
         #create empty array for output
         zarr_arr = np.zeros((data.shape[0],data.shape[1],data.shape[2]))
 
-        #chunk image 
-        z_start = list(range(0,data.shape[2],chunk_size))
-        for start in z_start:
-            #index the chunk
-            test_arr = data[:,:,start:start+chunk_size]
-
-            #pad last chunk
-            if test_arr.shape[2] != chunk_size:
-                add = np.zeros((test_arr.shape[0], test_arr.shape[0], chunk_size-test_arr.shape[2]))
-                add[:,:,:] = test_arr.min()
-                test_arr = np.concatenate((test_arr, add), axis=2)
-
-            #run segmentation
-            out_arr = predict_array(checkpt_file, './', test_arr, output_type = 'volume', 
+        #run segmentation
+        out_arr = predict_array(checkpt_file, './', data, output_type = 'volume', 
                                     iter_size= BoundingBox(Vector(0, 0, 0), Vector(iter_size[0], iter_size[1], iter_size[2])), 
                                     stride = Vector(stride[0], stride[1], stride[2]))
-
-            #add chunk to prepared array
-            try:
-                zarr_arr[:,:,start:start+chunk_size] = out_arr
-            except:
-                zarr_arr[:,:,start:data.shape[2]] = out_arr[:,:,0:data.shape[2]-start] #end chunk, given the padding
-
+        
         #save array to zarr
-        zarr.save(pos_dir + 'Pos' + str(strip) + '_Segmented.zarr', zarr_arr)
+        zarr.save(pos_dir + 'Pos' + str(strip) + '_Segmented.zarr', out_arr)
         print("Position " + str(strip) + " Complete")
                   
 
