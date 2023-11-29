@@ -102,7 +102,7 @@ location in 3D-space
         return (self * (1/other))
 
 
-class TensorArray():
+class TSArray():
     
     def __init__(self, tensor: ts.TensorStore, bounding_box: BoundingBox=None,
                  iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),

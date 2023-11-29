@@ -7,7 +7,7 @@ from ac_segmentation.neurotorch.datasets.dataset import Data
 from ac_segmentation.preprocess import lut_preprocess_array
 
 
-class TensorPredictor:
+class TSPredictor:
     """
     A predictor segments an input volume into an output volume
     """
