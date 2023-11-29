@@ -42,7 +42,7 @@ def reconnect(infile, swc_outdir, cl, sc, min_nodes = 10, prob_thresh = 0.5, res
         
     # Merge segment pairs with prob above thresh
     output_file = os.path.join(swc_outdir, 'connect_iter.swc') 
-    out_neurons = merge_pairs(neurons, pair_data_iter, prob_thresh)
+    out_neurons, merge_list = merge_pairs(neurons, pair_data_iter, prob_thresh)
         
     #output new swc files
     os.makedirs(swc_outdir + 'reconnected_skeletons', exist_ok=True)
@@ -388,35 +388,41 @@ def collinearity(ns, end_node_ids, num_nodes=(4, 49)):
     return cf
 
 
-def merge_pairs(neuro_list, pair_data, thresh): 
-    pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < 0.5)[0])==0) and (x[1][0] > thresh))]
+def merge_pairs(neuro_list, pair_data, thresh = 0.1): 
+    pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < 0.5)[0])==0))]
+    if thresh is not None:
+          pair_data = [x for x in pair_data if (x[1][0] > thresh)]
     merge_num = 0
+    merge_list = []
     
     #remove duplicates based on highest probability
     pair_data  = pd.DataFrame([list(i[0]) + list(i[1]) for i in pair_data])
     pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(0).sort_index()
     pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(1).sort_index()
-
+    pair_data =  pair_data[pair_data[0] != pair_data[1]]
+    
     #create graph object with pairs
-    pairs = [(row[0],row[1]) for ind,row in pair_data .iterrows()]
+    pairs = [(row[0][0],row[1][0]) for ind,row in pair_data.iterrows()]
     G = nx.Graph() 
     G.add_edges_from(pairs)
     cc = list(nx.connected_components(G))
+    
     for com in cc:
         merge_num += len(com)-1
         group = []
         for neu in com:
-            group.append(neuro_list[neuro_list.id == neu[0]])
-            neuro_list = neuro_list[(neuro_list.id != neu[0])]
+            group.append(neuro_list[neuro_list.id == neu])
+            neuro_list = neuro_list[(neuro_list.id != neu)]
         new_neu = navis.stitch_skeletons(group, method='LEAFS')
         neuro_list.append(new_neu)
+        merge_list.append(new_neu.name)
         
     #reset soma to none
     for neu in neuro_list:
         neu.soma = None
         
     print('Pairs Merged: ', merge_num)
-    return neuro_list
+    return neuro_list, merge_list
 
 def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1):    
     #find end nodes and just roots nodes

@@ -110,7 +110,7 @@ def postprocess(outdir, chunk_size, overlap, threshold=0.2, size_threshold=2000)
                     print('error')
 
                 
-def postprocess_kimi_array(outdir, stack, bound_box, overlap, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
+def postprocess_kimi_array(outdir, arr, bound_box = None, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
     
     #set default keyword arguments
     defaultKwargs = {'scale': 2, 'constant': 5, 'fill_holes' : False, 'parallel': 1, 'dust_threshold' : 10}
@@ -120,29 +120,30 @@ def postprocess_kimi_array(outdir, stack, bound_box, overlap, threshold=0.2, siz
     if not os.path.isdir(savedir):
         os.mkdir(savedir)
         
-    # Crop stack to original size 
-    new_stack_size = bound_box[2], bound_box[1], bound_box[0]  #zyx
-    stack = stack[0:new_stack_size[0],0:new_stack_size[1],0:new_stack_size[2]]
-    stack_size = stack.shape
+    # Crop array to specified size
+    if bound_box:
+      new_arr_size = bound_box[2], bound_box[1], bound_box[0]  #zyx
+      arr = arr[0:new_arr_size[0],0:new_arr_size[1],0:new_arr_size[2]]
+      arr_size = arr.shape
 
     # Zero values below threshold
-    stack[stack <= int(np.round(255*threshold))] = 0
+    arr[arr <= int(np.round(255*threshold))] = 0
         
-    # Binarize stack based on threshold
-    stack = (stack > int(np.round(255*threshold))).astype(np.uint8)
+    # Binarize array based on threshold
+    arr = (arr > int(np.round(255*threshold))).astype(np.uint8)
 
     # Label connected components
     s = ndi.generate_binary_structure(3,3)
-    stack = ndi.label(stack,structure=s)[0].astype(np.uint16)
-    num_cc = np.max(stack)
+    arr = ndi.label(arr,structure=s)[0].astype(np.uint16)
+    num_cc = np.max(arr)
 
     if num_cc != 0:
         # Remove components smaller than size_threshold 
-        stack = remove_small_objects(stack, min_size=size_threshold, connectivity=3)
-        unique_labels, counts = np.unique(stack,return_counts=True)
+        arr = remove_small_objects(arr, min_size=size_threshold, connectivity=3)
+        unique_labels, counts = np.unique(arr,return_counts=True)
             
         skels = kimimaro.skeletonize(
-            stack, 
+            arr, 
             teasar_params={
             "scale": kwargs['scale'], 
             "const": kwargs['constant'], # influences the finger branches allowed
@@ -218,12 +219,12 @@ def get_skeleton_orient(swc_path, min_node):
     return new_nl
     
     
-def combine_skels_strips(indir, outdir, y_overlap, im_dim, node_min = 10):
+def combine_skels_strips(indir, outdir_fn, y_offset, im_dim, node_min = 10):
     #get tar files and sort
     files = glob.glob(indir + "*.gz")
     files.sort()
     #create overlap volume
-    poly = Polygon([(0, 0), (0, im_dim[1] - abs(y_overlap)), (im_dim[2], im_dim[1] - abs(y_overlap)), (im_dim[2], 0)])
+    poly = Polygon([(0, 0), (0, im_dim[1] - abs(y_offset)), (im_dim[2], im_dim[1] - abs(y_offset)), (im_dim[2], 0)])
     out_sk = []
     for num, file in enumerate(files):
         skels = read_navis_neurons_tar(file)
@@ -237,16 +238,14 @@ def combine_skels_strips(indir, outdir, y_overlap, im_dim, node_min = 10):
                 drop_nodes = list(drop['node_id'])
                 sk.nodes['parent_id'] = sk.nodes['parent_id'].replace(drop_nodes,-1)
                 sk.nodes = sk.nodes[~sk.nodes['node_id'].isin(drop_nodes)]
-                sk.nodes['y'] = sk.nodes['y'] + (num*y_overlap)
+                sk.nodes['y'] = sk.nodes['y'] + (num*y_offset)
             if len(sk.nodes) == 0:
                 continue
             out_sk.append(sk)
+            
     out_sk = navis.NeuronList(out_sk)
-    temp_dir = outdir + "Temp/"
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        navis.write_swc(out_sk, temp_dir)
-        swc_multi_to_single_subdir(temp_dir, outdir + 'Strips_Consolidated.swc')
+    out_sk = navis.TreeNeuron(out_sk.nodes)
+    navis.write_swc(out_sk, outdir_fn)
         
 def read_navis_neurons_tar(tar_fn, concurrency=10, preprocess_func=None):
     preprocess_func = ((lambda x: x) if preprocess_func is None else preprocess_func)
