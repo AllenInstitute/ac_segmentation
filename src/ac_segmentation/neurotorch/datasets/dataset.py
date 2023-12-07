@@ -107,11 +107,11 @@ class TSArray():
     def __init__(self, tensor: ts.TensorStore, bounding_box: BoundingBox=None,
                  iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),
                                                          Vector(32, 32, 32)),
-                 stride: Vector=Vector(64, 64, 64)):
+                 stride: Vector=Vector(64, 64, 64), out_dtype: str='uint16', prob_map: bool=True):
         """
         Initializes a volume with a bounding box and iteration parameters
 
-        :param array: A 3D Numpy array
+        :param tensor: A 3D tensorstore object
         :param bounding_box: The bounding box encompassing the volume
         :param iteration_size: The bounding box of each data sample in the
         dataset iterable
@@ -120,7 +120,6 @@ class TSArray():
         """
         if isinstance(tensor, ts.TensorStore):
             self.tensor = tensor
-            
             pass
         else:
             raise ValueError("array must be a tensor")
@@ -128,6 +127,8 @@ class TSArray():
         self.setBoundingBox(bounding_box)
         self.setIteration(iteration_size=iteration_size,
                           stride=stride)
+        self.setProbMap(prob_map)
+        self.setOutDtype(out_dtype)
         self.shape = self.tensor.shape[0:3][::-1]
         
         super().__init__()
@@ -145,7 +146,13 @@ class TSArray():
         x1, y1, z1 = edge1.getComponents()
         x2, y2, z2 = (min(s, c) for s, c in zip(self.shape, edge2.getComponents()))
 
-        return self.tensor[z1:z2, y1:y2, x1:x2].write((1/(1+np.exp(-data_array[:z2-z1, :y2-y1, :x2-x1]))))
+        #create array to set into output volume
+        if self.prob_map == True:
+            write_arr = (255*(1/(1+np.exp(-data_array[:z2-z1, :y2-y1, :x2-x1])))).astype(self.out_dtype)
+        else:
+            write_arr = data_array[:z2-z1, :y2-y1, :x2-x1].astype(self.out_dtype)
+
+        return self.tensor[z1:z2, y1:y2, x1:x2].write(write_arr)
         
     def setBoundingBox(self, bounding_box: BoundingBox=None,displacement: Vector=None):
         """
@@ -191,8 +198,6 @@ class TSArray():
                                        self.getBoundingBox().getSize().getComponents(),
                                        self.iteration_size.getSize().getComponents(),
                                        self.stride.getComponents()))
-        
-
         self.index = 0
     
     def getBoundingBox(self) -> BoundingBox:
@@ -216,6 +221,17 @@ class TSArray():
 
     def getStride(self):
         return self.stride
+    
+    def setProbMap(self, prob_map):
+        if not isinstance(prob_map, bool):
+            raise ValueError("Probability map parameter requires True or False")
+
+        self.prob_map = prob_map
+        
+    def setOutDtype(self, out_dtype):
+        if out_dtype not in ['uint8', 'uint16', 'uint32']:
+            raise ValueError("Datatype must be one of the following: uint8,uint16,uint32,uint64")
+        self.out_dtype = out_dtype
     
     def setBatchSize(self, batch_size):
         self.batch_size = batch_size

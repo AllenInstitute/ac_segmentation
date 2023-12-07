@@ -59,14 +59,14 @@ class TSPredictor:
     def run(self, input_volume, output_volume, batch_size=30, max_pix = 30000, cpus = joblib.cpu_count()):
 
         def para_batch(batch_index):
+            keep = []
             batch = [input_volume[i] for i in batch_index]   
             batch = [Data(ts[0].result(),ts[1]) for ind,ts in enumerate(batch)]
             for ind,data in enumerate(batch):
-                if np.any(data.array) == False:
-                    batch[ind].array = np.zeros(input_volume.iteration_size.edge2)
-                batch[ind].array = lut_preprocess_array(batch[ind].array.astype(int), max_pix)
-            out = self.run_batch(batch, output_volume)
-            return out
+                if np.any(data.array) == True: #skip empty arrays
+                    batch[ind].array = lut_preprocess_array(batch[ind].array.astype(int), max_pix)
+                    keep.append(batch[ind])
+            self.run_batch(keep, output_volume)
             
         self.setBatchSize(batch_size)
         with torch.no_grad():
@@ -78,7 +78,7 @@ class TSPredictor:
             parallel_pool = Parallel(cpus)
             parallel_pool(delayed_funcs)
 
-          
+
     def run_batch(self, batch, output_volume): 
         bounding_boxes, arrays = self.toTorch(batch)
         inputs = Variable(arrays).float()
@@ -86,11 +86,9 @@ class TSPredictor:
         data_list = self.toData(outputs, bounding_boxes)
 
         writes = []
+        allskels = []
         for data in data_list:
-            try:
-                writes.append(output_volume.set(data))
-            except:
-                pass
+            writes.append(output_volume.set(data))
 
         for write in writes:
             write.result()
