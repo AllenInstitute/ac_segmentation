@@ -34,5 +34,9 @@ dependencies = [
     "scikit-learn",
     "pandas",
     "joblib",
+    "navis",
+    "kimimaro",
+    "zarr",
+    "argschema",
     "tensorstore"
 ]
