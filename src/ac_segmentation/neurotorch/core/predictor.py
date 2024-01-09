@@ -4,9 +4,14 @@ import numpy as np
 import joblib
 from joblib import Parallel, delayed
 from ac_segmentation.neurotorch.datasets.dataset import Data
-# from ac_segmentation.preprocess import lut_preprocess_array
 from ac_segmentation.utils import lut_preprocess_array
 
+
+def lut_preprocess_array(arr, max_int):
+    lut = np.empty(int(arr.max()+max_int))
+    lut[max_int:] = 255
+    lut[:max_int] = np.round(np.arange(max_int) * (255 / max_int))
+    return lut[arr]
 
 class Predictor:
     """
@@ -29,7 +34,7 @@ class Predictor:
     def loadCheckpoint(self, checkpoint):
         self.getNet().load_state_dict(torch.load(checkpoint, map_location=self.device))
 
-    def run(self, input_volume, output_volume, batch_size=30):
+    def run(self, input_volume, output_volume, batch_size=100, max_pix = 30000):
         self.setBatchSize(batch_size)
 
         with torch.no_grad():
@@ -40,6 +45,9 @@ class Predictor:
 
             for batch_index in batch_list:
                 batch = [input_volume[i] for i in batch_index]
+
+                for ind,data in enumerate(batch):
+                    batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
 
                 self.run_batch(batch, output_volume)
 
@@ -53,9 +61,13 @@ class Predictor:
         bounding_boxes, arrays = self.toTorch(batch)
         inputs = Variable(arrays).float()
 
-        outputs = self.getNet()(inputs)
+        data_list = []
+        batch_list = [list(range(len(inputs)))[i:i+ int(len(batch)/10)]for i in range(0,len(inputs),int(len(batch)/10))]
+        for s_batch in batch_list:
+            st,end = s_batch[0], s_batch[-1]
+            outputs = self.getNet()(inputs[st:end])
+            data_list += self.toData(outputs, bounding_boxes[st:end])
 
-        data_list = self.toData(outputs, bounding_boxes)
         for data in data_list:
             output_volume.blend(data)
 
@@ -106,39 +118,34 @@ class TSPredictor(Predictor):
 
         return batch
 
-    def run(self, input_volume, output_volume, batch_size=30, max_pix = 30000, cpus = joblib.cpu_count()):
-
-        def para_batch(batch_index):
-            keep = []
-            batch = [input_volume[i] for i in batch_index]   
-            batch = [Data(ts[0].result(),ts[1]) for ind,ts in enumerate(batch)]
-            for ind,data in enumerate(batch):
-                if np.any(data.array) == True: #skip empty arrays
-                    batch[ind].array = lut_preprocess_array(batch[ind].array.astype(int), max_pix)
-                    keep.append(batch[ind])
-            self.run_batch(keep, output_volume)
-            
+    def run(self, input_volume, output_volume, batch_size=30, max_pix = 30000):
         self.setBatchSize(batch_size)
+
         with torch.no_grad():
-            batch_list = [list(range(len(input_volume)))[i:i+batch_size]
-                for i in range(0,
-                                len(input_volume),
-                                batch_size)]
-            delayed_funcs = [delayed(para_batch)(b) for b in batch_list]
-            parallel_pool = Parallel(cpus)
-            parallel_pool(delayed_funcs)
+            batch_list = [list(range(len(input_volume)))[i:i+self.getBatchSize()]
+                          for i in range(0,
+                                         len(input_volume),
+                                         self.getBatchSize())]
+
+            for batch_index in batch_list:
+                batch = [input_volume[i] for i in batch_index]
+
+                for ind,data in enumerate(batch):
+                    batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
+
+                self.run_batch(batch, output_volume) 
 
 
-    def run_batch(self, batch, output_volume): 
+    def run_batch(self, batch, output_volume):
         bounding_boxes, arrays = self.toTorch(batch)
         inputs = Variable(arrays).float()
-        outputs = self.getNet()(inputs)
-        data_list = self.toData(outputs, bounding_boxes)
 
-        writes = []
-        allskels = []
+        data_list = []
+        batch_list = [list(range(len(inputs)))[i:i+ int(len(batch)/10)]for i in range(0,len(inputs),int(len(batch)/10))]
+        for s_batch in batch_list:
+            st,end = s_batch[0], s_batch[-1]
+            outputs = self.getNet()(inputs[st:end])
+            data_list += self.toData(outputs, bounding_boxes[st:end])
+
         for data in data_list:
-            writes.append(output_volume.set(data))
-
-        for write in writes:
-            write.result()
+            output_volume.blend(data)
