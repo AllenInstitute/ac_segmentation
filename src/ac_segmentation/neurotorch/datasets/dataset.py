@@ -1,3 +1,4 @@
+import torch
 from torch.utils.data import Dataset as _Dataset
 import numpy as np
 from abc import abstractmethod
@@ -9,6 +10,40 @@ import math
 import scipy
 import tensorstore as ts
 from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
+import h5py
+
+
+def create_EmptyTensor(filepath, shape, dtype = 'uint16', chunk_shape = [64, 64, 64]):
+    out_arr = ts.open({
+     'driver': 'zarr',
+     'kvstore': 'file://' + str(filepath),
+     },
+     dtype=dtype,
+     chunk_layout=ts.ChunkLayout(chunk_shape=chunk_shape),
+     create=True,
+     shape=list(shape)).result()
+    
+    return out_arr
+
+def open_ZarrTensor(filepath, bytes_limit= 100_000_000):
+    #Load tensorstore array
+    dataset_future = ts.open({
+         'driver':
+             'zarr',
+         'kvstore':
+             'file://' + str(filepath),
+     # Use 100MB in-memory cache.
+         'context': {
+             'cache_pool': {
+                 'total_bytes_limit': bytes_limit
+             }
+         },
+         'recheck_cached_data':
+         'open',
+     })
+
+    return dataset_future.result()
+
 
 class Data:
     """
@@ -101,231 +136,6 @@ location in 3D-space
 
         return (self * (1/other))
 
-
-class TSArray():
-    
-    def __init__(self, tensor: ts.TensorStore, bounding_box: BoundingBox=None,
-                 iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),
-                                                         Vector(32, 32, 32)),
-                 stride: Vector=Vector(64, 64, 64), out_dtype: str='uint16', prob_map: bool=True):
-        """
-        Initializes a volume with a bounding box and iteration parameters
-
-        :param tensor: A 3D tensorstore object
-        :param bounding_box: The bounding box encompassing the volume
-        :param iteration_size: The bounding box of each data sample in the
-        dataset iterable
-        :param stride: The stride displacement of each data sample in the
-        dataset iterable. The displacement proceeds first from X then to Y then to Z.
-        """
-        if isinstance(tensor, ts.TensorStore):
-            self.tensor = tensor
-            pass
-        else:
-            raise ValueError("array must be a tensor")
-        
-        self.setBoundingBox(bounding_box)
-        self.setIteration(iteration_size=iteration_size,
-                          stride=stride)
-        self.setProbMap(prob_map)
-        self.setOutDtype(out_dtype)
-        self.shape = self.tensor.shape[0:3][::-1]
-        
-        super().__init__()
-        
-    def set(self, data):
-        """Allow dropping data off of improperly shaped arrays"""
-        data_bounding_box = data.getBoundingBox()
-        data_array = data.getArray()
-            
-        #get edge components 
-        data_edge1, data_edge2 = data_bounding_box.getEdges()
-        array_edge1, array_edge2 = self.getBoundingBox().getEdges()
-        edge1 = data_edge1 - array_edge1
-        edge2 = data_edge2 - array_edge1
-        x1, y1, z1 = edge1.getComponents()
-        x2, y2, z2 = (min(s, c) for s, c in zip(self.shape, edge2.getComponents()))
-
-        #create array to set into output volume
-        if self.prob_map == True:
-            write_arr = (255*(1/(1+np.exp(-data_array[:z2-z1, :y2-y1, :x2-x1])))).astype(self.out_dtype)
-        else:
-            write_arr = data_array[:z2-z1, :y2-y1, :x2-x1].astype(self.out_dtype)
-
-        return self.tensor[z1:z2, y1:y2, x1:x2].write(write_arr)
-        
-    def setBoundingBox(self, bounding_box: BoundingBox=None,displacement: Vector=None):
-        """
-        Sets the bounding box of the volume. By default, it sets the bounding
-        box to the volume size
-
-        :param bounding_box: The bounding box of the volume
-        :param displacement: The displacement of the bounding box from the
-        origin
-        """
-        if bounding_box is None:
-            self.bounding_box = BoundingBox(Vector(0, 0, 0),
-                                            Vector(*self.tensor.shape[0:3][::-1]))
-        else:
-            self.bounding_box = bounding_box
-
-        if displacement is not None:
-            self.bounding_box = self.bounding_box + displacement
-    
-    def setIteration(self, iteration_size: BoundingBox, stride: Vector):
-        """
-        Sets the parameters for iterating through the dataset
-
-        :param iteration_size: The size of each data sample in the volume
-        :param stride: The displacement of each iteration
-        """
-        if not isinstance(iteration_size, BoundingBox):
-            error_string = ("iteration_size must have type BoundingBox"
-                            + " instead it has type {}")
-            error_string = error_string.format(type(iteration_size))
-            raise ValueError(error_string)
-
-        if not isinstance(stride, Vector):
-            raise ValueError("stride must have type Vector")
-
-        if not iteration_size.isSubset(BoundingBox(Vector(0, 0, 0),
-                                                   self.getBoundingBox().getSize())):
-            raise ValueError("iteration_size must be smaller than volume size")
-
-        self.setIterationSize(iteration_size)
-        self.setStride(stride)
-        self.element_vec = Vector(*map(lambda L, l, s: math.ceil((L-l)/s+1),
-                                       self.getBoundingBox().getSize().getComponents(),
-                                       self.iteration_size.getSize().getComponents(),
-                                       self.stride.getComponents()))
-        self.index = 0
-    
-    def getBoundingBox(self) -> BoundingBox:
-        """
-        Retrieves the bounding box of the volume
-
-        :return: The bounding box of the volume
-        """
-        return self.bounding_box
-    
-    def setIterationSize(self, iteration_size):
-        self.iteration_size = BoundingBox(Vector(0, 0, 0),
-                                          iteration_size.getSize())
-        
-    def getIterationSize(self):
-        return self.iteration_size
-        
-    def setStride(self, stride):
-        self.stride = stride
-
-
-    def getStride(self):
-        return self.stride
-    
-    def setProbMap(self, prob_map):
-        if not isinstance(prob_map, bool):
-            raise ValueError("Probability map parameter requires True or False")
-
-        self.prob_map = prob_map
-        
-    def setOutDtype(self, out_dtype):
-        if out_dtype not in ['uint8', 'uint16', 'uint32']:
-            raise ValueError("Datatype must be one of the following: uint8,uint16,uint32,uint64")
-        self.out_dtype = out_dtype
-    
-    def setBatchSize(self, batch_size):
-        self.batch_size = batch_size
-    
-    
-    def getBatchSize(self):
-        return self.batch_size
-    
-    def __len__(self):
-        return self.element_vec[0]*self.element_vec[1]*self.element_vec[2]
-    
-    def _indexToBoundingBox(self, idx):
-        if idx >= len(self):
-            self.index = 0
-            raise StopIteration
-
-        element_vec = np.unravel_index(idx,
-                                       shape=self.element_vec.getComponents())
-        element_vec = Vector(*element_vec)
-        bounding_box = self.iteration_size+self.stride*element_vec
-
-        return bounding_box
-    
-    def __getitem__(self, idx):
-        bounding_box = self._indexToBoundingBox(idx)
-        result = self.get(bounding_box)
-        
-        return result
-
-    def _indexToTensor(self, idx):
-        if idx >= len(self):
-            self.index = 0
-            raise StopIteration
-
-        element_vec = np.unravel_index(idx,
-                                       shape=self.element_vec.getComponents())
-
-        element_vec = Vector(*element_vec)
-        bounding_box = self.iteration_size+self.stride*element_vec
-        edge1, edge2 = bounding_box.getEdges()
-        x1, y1, z1 = edge1.getComponents()
-        x2, y2, z2 = edge2.getComponents()
-        
-        return self.tensor[z1:z2,y1:y2,x1:x2]
-    
-    def get(self, bounding_box: BoundingBox) -> Data:
-        """
-        Requests a data sample from the volume. If the bounding box does
-        not exist, then the method raises a ValueError.
-    
-        :param bounding_box: The bounding box of the request data sample
-        :return: The data sample requested
-        """
-        if bounding_box.isDisjoint(self.getBoundingBox()):
-            error_string = ("Bounding box must be inside dataset " +
-                            "dimensions instead bounding box is {} while " +
-                            "the dataset dimensions are {}")
-            error_string = error_string.format(bounding_box,
-                                               self.getBoundingBox())
-            raise ValueError(error_string)
-
-        sub_bounding_box = bounding_box.intersect(self.getBoundingBox())
-        array = self.getArray(sub_bounding_box)
-
-        return array, bounding_box
-    
-    def getArray(self, bounding_box: BoundingBox=None) -> np.ndarray:
-        """
-        Retrieves the array contents of the volume. If a bounding box is
-        provided, the subsection is returned.
-
-        :param bounding_box: The bounding box of a subsection of the volume.
-        If the bounding box is outside of the volume, a ValueError is raised.
-        """
-        if bounding_box is None:
-            return self.tensor[z1:z2, y1:y2, x1:x2].read()
-
-        else:
-            if not bounding_box.isSubset(self.getBoundingBox()):
-                raise ValueError("The bounding box must be a subset" +
-                                 " of the volume")
-
-            centered_bounding_box = bounding_box - self.getBoundingBox().getEdges()[0]
-            edge1, edge2 = centered_bounding_box.getEdges()
-            x1, y1, z1 = edge1.getComponents()
-            x2, y2, z2 = edge2.getComponents()
-
-            return self.tensor[z1:z2, y1:y2, x1:x2].read()
-
-    def __enter__(self):
-        pass
-
-    def __exit__(self):
-        pass
         
         
 class Array:
@@ -552,6 +362,77 @@ origin
 
     def __exit__(self):
         pass
+        
+        
+class TSArray(Array):
+    """
+    A dataset containing a 3D volumetric array
+    """
+    def __init__(self, array , bounding_box: BoundingBox=None,
+                 iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),
+                                                         Vector(64, 64, 64)),
+                 stride: Vector=Vector(32, 32, 32), prob_dtype: str='int16'):
+        """
+        Initializes a volume with a bounding box and iteration parameters
+
+        :param tensor: A 3D tensorstore object
+        :param bounding_box: The bounding box encompassing the volume
+        :param iteration_size: The bounding box of each data sample in the
+        dataset iterable
+        :param stride: The stride displacement of each data sample in the
+        dataset iterable. The displacement proceeds first from X then to Y then to Z.
+        """
+        if isinstance(array, ts.TensorStore):
+            self._setArray(array.read().result())
+            pass
+
+        elif isinstance(array, np.ndarray):
+            self._setArray(array)
+            pass
+            
+        else:
+            raise ValueError("array must be a tensorstore object or a numpy array")
+        
+        self.setProbDtype(prob_dtype)
+        self.setBoundingBox(bounding_box)
+        self.setIteration(iteration_size=iteration_size,
+                          stride=stride)
+        self.shape = self.array.shape[0:3][::-1]
+
+    def set(self, data):
+        """Allow dropping data off of improperly shaped arrays"""
+        data_bounding_box = data.getBoundingBox()
+        data_array = data.getArray()
+            
+        #get edge components 
+        data_edge1, data_edge2 = data_bounding_box.getEdges()
+        array_edge1, array_edge2 = self.getBoundingBox().getEdges()
+        edge1 = data_edge1 - array_edge1
+        edge2 = data_edge2 - array_edge1
+        x1, y1, z1 = edge1.getComponents()
+        x2, y2, z2 = (min(s, c) for s, c in zip(self.shape, edge2.getComponents()))
+
+        self.array[z1:z2, y1:y2, x1:x2] = data_array[:z2-z1, :y2-y1, :x2-x1]
+
+    def _setArray(self, array):
+        self.array = array
+
+    def setProbDtype(self, prob_dtype):
+        self.prob_dtype = prob_dtype
+
+    def getProbMap(self):
+        return  torch.special.expit(torch.from_numpy(self.array))
+    
+    def outputProbMap(self, dir, type='zarr'):
+        if type == 'zarr':
+            prob_map = torch.special.expit(torch.from_numpy(self.array))
+            ts = create_EmptyTensor(dir + 'Prob_Map_Segment.zarr', prob_map.shape, dtype = self.prob_dtype)
+            ts[:,:,:].write(prob_map).result()
+        
+        elif type == 'hdf5':
+            prob_map = torch.special.expit(torch.from_numpy(self.array))
+            with h5py.File(dir + 'Prob_Map_Segment.h5', 'w') as hf:
+                hf.create_dataset( "Prob_Map_Segment",  data=prob_map)
 
 
 class TorchVolume(_Dataset):
