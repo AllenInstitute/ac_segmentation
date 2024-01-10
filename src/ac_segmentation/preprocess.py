@@ -14,6 +14,13 @@ class PreprocessParameters(ags.ArgSchema):
     output_dir = ags.fields.OutputDir(required=True, description='Output directory')
     chunk_size = ags.fields.Int(dtype='int', required=False, default=416)
     overlap = ags.fields.Int(dtype='int', required=False, default=16)
+    
+  
+def lut_preprocess_array(arr, max_int):
+    lut = np.empty(int(arr.max()+max_int))
+    lut[max_int:] = 255
+    lut[:max_int] = np.round(np.arange(max_int) * (255 / max_int))
+    return lut[arr]
 
 def chunk_volume(indir, outdir, chunk_size, overlap, mip=0):
     dir_list = ['chunks', 'deskewed', 'inputs']
@@ -182,13 +189,7 @@ def miplevel_from_group_dir(group_dir, mip=0):
             group_objs.append(f[g])
     return group_objs[-1][f"s{mip}"]
     
-    
-def lut_preprocess_array(arr, max_int):
-    lut = np.empty(int(arr.max()+max_int), dtype="uint16")
-    lut[max_int:] = 255
-    lut[:max_int] = np.round(np.arange(max_int) * (255 / max_int))
-    return lut[arr] 
-    
+       
 class Preprocess(ags.ArgSchemaParser):
         
     def run(self):
