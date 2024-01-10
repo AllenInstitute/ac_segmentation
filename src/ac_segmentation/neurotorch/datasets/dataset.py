@@ -11,6 +11,9 @@ import scipy
 import tensorstore as ts
 from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
 import h5py
+import tifffile as tif
+import os
+import zarr
 
 
 def create_EmptyTensor(filepath, shape, dtype = 'uint16', chunk_shape = [64, 64, 64]):
@@ -368,10 +371,10 @@ class TSArray(Array):
     """
     A dataset containing a 3D volumetric array
     """
-    def __init__(self, array , bounding_box: BoundingBox=None,
+    def __init__(self, array, bounding_box: BoundingBox=None,
                  iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),
                                                          Vector(64, 64, 64)),
-                 stride: Vector=Vector(32, 32, 32), prob_dtype: str='int16'):
+                 stride: Vector=Vector(32, 32, 32), prob_out: bool=True):
         """
         Initializes a volume with a bounding box and iteration parameters
 
@@ -383,21 +386,22 @@ class TSArray(Array):
         dataset iterable. The displacement proceeds first from X then to Y then to Z.
         """
         if isinstance(array, ts.TensorStore):
+            self.tensor = array
             self._setArray(array.read().result())
             pass
 
         elif isinstance(array, np.ndarray):
             self._setArray(array)
-            pass
+            pass  
             
         else:
             raise ValueError("array must be a tensorstore object or a numpy array")
         
-        self.setProbDtype(prob_dtype)
         self.setBoundingBox(bounding_box)
         self.setIteration(iteration_size=iteration_size,
                           stride=stride)
         self.shape = self.array.shape[0:3][::-1]
+        self.prob_out = prob_out
 
     def set(self, data):
         """Allow dropping data off of improperly shaped arrays"""
@@ -412,27 +416,27 @@ class TSArray(Array):
         x1, y1, z1 = edge1.getComponents()
         x2, y2, z2 = (min(s, c) for s, c in zip(self.shape, edge2.getComponents()))
 
-        self.array[z1:z2, y1:y2, x1:x2] = data_array[:z2-z1, :y2-y1, :x2-x1]
-
-    def _setArray(self, array):
-        self.array = array
-
-    def setProbDtype(self, prob_dtype):
-        self.prob_dtype = prob_dtype
-
-    def getProbMap(self):
-        return  torch.special.expit(torch.from_numpy(self.array))
-    
-    def outputProbMap(self, dir, type='zarr'):
-        if type == 'zarr':
-            prob_map = torch.special.expit(torch.from_numpy(self.array))
-            ts = create_EmptyTensor(dir + 'Prob_Map_Segment.zarr', prob_map.shape, dtype = self.prob_dtype)
-            ts[:,:,:].write(prob_map).result()
+        if self.prob_out == True:
+            out = 255*torch.special.expit(torch.from_numpy(data_array[:z2-z1, :y2-y1, :x2-x1]))
+        else:
+            out = data_array[:z2-z1, :y2-y1, :x2-x1]
         
-        elif type == 'hdf5':
-            prob_map = torch.special.expit(torch.from_numpy(self.array))
-            with h5py.File(dir + 'Prob_Map_Segment.h5', 'w') as hf:
-                hf.create_dataset( "Prob_Map_Segment",  data=prob_map)
+        self.array[z1:z2, y1:y2, x1:x2] = out
+
+    def set_zarr(self): #used to set data if a tensorstore was used for the output
+        zarr.save(str(self.tensor.kvstore.path), self.array)
+        
+    def out_zarr(self, dir):
+        zarr.save(dir + 'Seg_Array.zarr', self.array)
+    
+    def out_hdf5(self, dir):
+        with h5py.File(dir + 'Seg_Array.h5', 'w') as hf:
+            hf.create_dataset( "Seg_Array",  data=self.array)
+
+    def out_tiff(self, dir, dim=0):
+        for i in range(prob_map.shape[dim]):
+            tif.imsave(os.path.join(dir, 'Seg_Tiffs/' ,'%03d.tif'%i), self.array[i,:,:]) 
+            
 
 
 class TorchVolume(_Dataset):
