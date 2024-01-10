@@ -415,13 +415,24 @@ class TSArray(Array):
         edge2 = data_edge2 - array_edge1
         x1, y1, z1 = edge1.getComponents()
         x2, y2, z2 = (min(s, c) for s, c in zip(self.shape, edge2.getComponents()))
-
-        if self.prob_out == True:
-            out = 255*torch.special.expit(torch.from_numpy(data_array[:z2-z1, :y2-y1, :x2-x1]))
-        else:
-            out = data_array[:z2-z1, :y2-y1, :x2-x1]
         
-        self.array[z1:z2, y1:y2, x1:x2] = out
+        self.array[z1:z2, y1:y2, x1:x2] = data_array[:z2-z1, :y2-y1, :x2-x1]
+        
+    def blend(self, data: Data):
+        """
+        Blends a section of the volume within the provided bounding box with
+        the given data by taking the elementwise maximum value.
+
+        :param data: The data packet to blend into the volume
+        """
+        array = self.get(data.getBoundingBox()).getArray()
+        data_array = data.getArray()
+        if self.prob_out == True:
+            data_array = 255*torch.special.expit(torch.from_numpy(data_array))
+        array = np.maximum(array, data_array)
+        result = Data(array, data.getBoundingBox())
+        
+        self.set(result)
 
     def set_zarr(self): #used to set data if a tensorstore was used for the output
         zarr.save(str(self.tensor.kvstore.path), self.array)
