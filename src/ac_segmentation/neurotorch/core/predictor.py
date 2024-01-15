@@ -28,7 +28,7 @@ class Predictor:
     def loadCheckpoint(self, checkpoint):
         self.getNet().load_state_dict(torch.load(checkpoint, map_location=self.device))
 
-    def run(self, input_volume, output_volume, batch_size=100, max_pix = 30000):
+    def run(self, input_volume, output_volume, batch_size=30, max_pix = 30000):
         self.setBatchSize(batch_size)
 
         with torch.no_grad():
@@ -38,12 +38,18 @@ class Predictor:
                                          self.getBatchSize())]
 
             for batch_index in batch_list:
+                keep = []
                 batch = [input_volume[i] for i in batch_index]
 
-                for ind,data in enumerate(batch):
-                    batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
+                if hasattr(input_volume, 'tensor'):
+                    batch = [Data(np.pad(ind.array.result(), pad_width=ind.pad_size, mode="constant"),ind.bounding_box) for ind in batch]
 
-                self.run_batch(batch, output_volume)
+                for ind,data in enumerate(batch):
+                    if np.any(data.array) == True:
+                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
+                        keep.append(batch[ind])
+                
+                self.run_batch(keep, output_volume)
 
     def getBatchSize(self):
         return self.batch_size
@@ -62,8 +68,17 @@ class Predictor:
             outputs = self.getNet()(inputs[st:end])
             data_list += self.toData(outputs, bounding_boxes[st:end])
 
-        for data in data_list:
-            output_volume.blend(data)
+        if hasattr(output_volume, 'tensor'):
+            writes = []
+            for data in data_list:
+                writes.append(output_volume.blend(data))
+                
+            for write in writes:
+                write.result()
+                
+        else:
+            for data in data_list:
+                output_volume.blend(data)
 
     def toArray(self, data):
         torch_data = data.getArray().astype(float)
