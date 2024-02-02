@@ -6,6 +6,12 @@ from joblib import Parallel, delayed
 from ac_segmentation.neurotorch.datasets.dataset import Data
 from ac_segmentation.preprocess import lut_preprocess_array
 
+import ac_segmentation.neurotorch.datasets.dataset
+from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
+Array = ac_segmentation.neurotorch.datasets.dataset.Array
+TSArray = ac_segmentation.neurotorch.datasets.dataset.TSArray
+
+
 
 class Predictor:
     """
@@ -29,8 +35,8 @@ class Predictor:
         self.getNet().load_state_dict(torch.load(checkpoint, map_location=self.device))
 
     def run(self, input_volume, output_volume, batch_size=30, max_pix = 30000):
+        
         self.setBatchSize(batch_size)
-
         with torch.no_grad():
             batch_list = [list(range(len(input_volume)))[i:i+self.getBatchSize()]
                           for i in range(0,
@@ -40,16 +46,30 @@ class Predictor:
             for batch_index in batch_list:
                 keep = []
                 batch = [input_volume[i] for i in batch_index]
+                if isinstance(input_volume, TSArray):
+                    batch = [Data(np.pad(i.array.result(), pad_width=i.pad_size, mode="constant"),i.bounding_box) for i in batch]
 
-                if hasattr(input_volume, 'tensor'):
-                    batch = [Data(np.pad(ind.array.result(), pad_width=ind.pad_size, mode="constant"),ind.bounding_box) for ind in batch]
-
+                if hasattr(input_volume, 'mask'):
+                    masks = [input_volume.mask[i] for i in batch_index]
+                    if isinstance(input_volume.mask, TSArray):
+                        masks = [Data(i.array.result(), i.bounding_box) for i in masks]
+                    
                 for ind,data in enumerate(batch):
+                    if hasattr(input_volume, 'li_thresh'):
+                        batch[ind].array[batch[ind].array < input_volume.li_thresh] = 0
+
+                    if hasattr(input_volume, 'mask'):
+                        batch[ind].array = np.where(masks[ind].array, batch[ind].array, 0)
+                        
                     if np.any(data.array) == True:
                         batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
                         keep.append(batch[ind])
-                
-                self.run_batch(keep, output_volume)
+
+                if isinstance(input_volume, TSArray):
+                    self.run_batch(keep, output_volume, input_volume.shift)
+
+                else:
+                    self.run_batch(keep, output_volume)
 
     def getBatchSize(self):
         return self.batch_size
@@ -57,7 +77,7 @@ class Predictor:
     def setBatchSize(self, batch_size):
         self.batch_size = batch_size
 
-    def run_batch(self, batch, output_volume):
+    def run_batch(self, batch, output_volume, in_shift=[0,0,0]):
         bounding_boxes, arrays = self.toTorch(batch)
         inputs = Variable(arrays).float()
 
@@ -71,13 +91,16 @@ class Predictor:
         if hasattr(output_volume, 'tensor'):
             writes = []
             for data in data_list:
-                writes.append(output_volume.blend(data))
+                writes.append(output_volume.blend(data, in_shift))
                 
             for write in writes:
-                write.result()
-                
+                write.result()  
+
         else:
             for data in data_list:
+                v1 = data.bounding_box.edge1 - Vector(*in_shift[::-1])
+                v2 = data.bounding_box.edge2 - Vector(*in_shift[::-1])
+                data = Data(data.array, BoundingBox(v1,v2))
                 output_volume.blend(data)
 
     def toArray(self, data):

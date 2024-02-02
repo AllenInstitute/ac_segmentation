@@ -387,7 +387,7 @@ class TSArray(Array):
             self.shift = [list(tensor.domain[0])[0], list(tensor.domain[1])[0], list(tensor.domain[2])[0]]
             pass
         else:
-            raise ValueError("array must be a tensor")
+            raise ValueError("Array must be a tensorstore object")
 
         self.setBoundingBox(bounding_box)
         self.setIteration(iteration_size=iteration_size,
@@ -429,18 +429,6 @@ class TSArray(Array):
 
         if displacement is not None:
             self.bounding_box = self.bounding_box + displacement
-
-    def _indexToBoundingBoxold(self, idx):
-        if idx >= len(self):
-            self.index = 0
-            raise StopIteration
-
-        element_vec = np.unravel_index(idx,
-                                       shape=self.element_vec.getComponents())
-        element_vec = Vector(*element_vec)
-        bounding_box = self.iteration_size+self.stride*element_vec
-
-        return bounding_box
 
     def _indexToBoundingBox(self, idx):
         if idx >= len(self):
@@ -511,7 +499,6 @@ class TSArray(Array):
         out_data.pad_size = pad_size
         
         return out_data
-        
 
     def getArray(self, bounding_box: BoundingBox=None) -> np.ndarray:
         """
@@ -536,20 +523,26 @@ class TSArray(Array):
 
             return self.tensor[z1:z2, y1:y2, x1:x2].read()
 
-    def blend(self, data: Data):
+    def blend(self, data: Data, shift):
         """
         Blends a section of the volume within the provided bounding box with
         the given data by taking the elementwise maximum value.
 
         :param data: The data packet to blend into the volume
         """
-        array = self.get(data.getBoundingBox()).getArray().result()
+
+        v1 = data.bounding_box.edge1 - Vector(*shift[::-1])
+        v2 = data.bounding_box.edge2 - Vector(*shift[::-1])
+        data_bb = BoundingBox(v1,v2)
+        
+        array = self.get(data_bb).getArray().result()
         data_array = data.getArray()
+        
         if self.prob_map == True:
             data_array = 255*torch.special.expit(torch.from_numpy(data_array)).numpy()
         x,y,z = array.shape
         array = np.maximum(array, data_array[:x,:y,:z])
-        result = Data(array, data.getBoundingBox())
+        result = Data(array, data_bb)
         write = self.set(result)
         
         return write
@@ -565,6 +558,20 @@ class TSArray(Array):
         os.mkdir(path) 
         for i in range(self.tensor.shape[0]):
             tif.imwrite(path + '%03d.tif'%i, self.tensor[i,:,:].read().result())
+
+    def setMask(self, mask):
+        if isinstance(mask, ts.TensorStore):
+            self.mask = TSArray(mask, stride=self.stride, iteration_size=self.iteration_size)
+        elif isinstance(mask, np.ndarray):
+            self.mask = Array(mask, stride=self.stride, iteration_size=self.iteration_size)
+        else:
+            raise ValueError("Mask must be a tensorstore object or numpy array")
+
+    def setLiThreshold(self, li_thresh):
+        if isinstance(li_thresh, int) or isinstance(li_thresh, float):
+            self.li_thresh = li_thresh
+        else:
+            raise ValueError("Li threshold must be an integer or float")
             
 
 
