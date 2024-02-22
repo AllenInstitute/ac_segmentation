@@ -381,6 +381,7 @@ class TSArray(Array):
         dataset iterable
         :param stride: The stride displacement of each data sample in the
         dataset iterable. The displacement proceeds first from X then to Y then to Z.
+        :param prob_map: The array is a probability map or now (if using blend function)
         """
         if isinstance(tensor, ts.TensorStore):
             self.tensor = tensor
