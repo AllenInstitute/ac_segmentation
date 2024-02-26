@@ -259,6 +259,14 @@ def read_navis_neurons_tar(tar_fn, concurrency=10, preprocess_func=None):
             preprocess_func(fut.result()) for
             fut in concurrent.futures.as_completed(futs)])
     return navis_neurons
+
+def write_kimi_skels_tar(tar_fn, skels):
+    with tarfile.open(tar_fn, mode="w:gz") as t:
+        for skid, skel in skels.items():
+            bio = BytesIO(skel.to_swc().encode())
+            info = tarfile.TarInfo(name=f"{skid}.swc")
+            info.size = len(bio.getbuffer())
+            t.addfile(tarinfo=info, fileobj=bio)
             
 def load_stack(dirname):
     # Load image stack filenames
