@@ -371,7 +371,7 @@ class TSArray(Array):
     def __init__(self, tensor: ts.TensorStore, bounding_box: BoundingBox=None,
                  iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),
                                                          Vector(32, 32, 32)),
-                 stride: Vector=Vector(64, 64, 64), prob_map: bool=True):
+                 stride: Vector=Vector(64, 64, 64), prob_map: bool=False):
         """
         Initializes a volume with a bounding box and iteration parameters
 
