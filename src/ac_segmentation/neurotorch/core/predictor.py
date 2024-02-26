@@ -34,7 +34,7 @@ class Predictor:
     def loadCheckpoint(self, checkpoint):
         self.getNet().load_state_dict(torch.load(checkpoint, map_location=self.device))
 
-    def run(self, input_volume, output_volume, batch_size=30, max_pix = 30000):
+    def run(self, input_volume, output_volume, batch_size=30, max_pix = None):
         
         self.setBatchSize(batch_size)
         with torch.no_grad():
@@ -62,7 +62,8 @@ class Predictor:
                         batch[ind].array = np.where(masks[ind].array, batch[ind].array, 0)
                         
                     if np.any(data.array) == True:
-                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
+                        if max_pix != None:
+                          batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
                         keep.append(batch[ind])
 
                 if isinstance(input_volume, TSArray):
