@@ -44,10 +44,10 @@ def reconnect(infile, swc_outdir, cl, sc, min_nodes = 10, prob_thresh = 0.5, res
     output_file = os.path.join(swc_outdir, 'connect_iter.swc') 
     out_neurons, merge_list = merge_pairs(neurons, pair_data_iter, prob_thresh)
         
-    #output new swc files
-    os.makedirs(swc_outdir + 'reconnected_skeletons', exist_ok=True)
-    navis.write_swc(out_neurons, swc_outdir + 'reconnected_skeletons')
-    return neurons
+    #output swc file
+    tn_neurons = navis.TreeNeuron(out_neurons.nodes)
+    navis.write_swc(tn_neurons,'reconnected_skeletons')
+    return out_neurons
             
             
 def load_swc(filepath):
