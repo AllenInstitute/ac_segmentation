@@ -13,13 +13,6 @@ class PreprocessParameters(ags.ArgSchema):
     output_dir = ags.fields.OutputDir(required=True, description='Output directory')
     chunk_size = ags.fields.Int(dtype='int', required=False, default=416)
     overlap = ags.fields.Int(dtype='int', required=False, default=16)
-    
-  
-def lut_preprocess_array(arr, max_int):
-    lut = np.empty(int(arr.max()+max_int))
-    lut[max_int:] = 255
-    lut[:max_int] = np.round(np.arange(max_int) * (255 / max_int))
-    return lut[arr]
 
 def chunk_volume(indir, outdir, chunk_size, overlap, mip=0):
     dir_list = ['chunks', 'deskewed', 'inputs']
@@ -135,6 +128,13 @@ def create_input(stack_in, fname, Imax=65535):
     # Save stack as single tif file
     tif.imwrite(fname, stack_out) 
     return stack_out   
+    
+    
+def lut_preprocess_array(arr, max_int):
+    lut = np.empty(arr.max()+max_int, dtype="uint8")
+    lut[max_int:] = 255
+    lut[:max_int] = np.round(np.arange(max_int) * (255 / max_int))
+    return lut[arr]
 
 # General purpose helper methods
 def ldel(string_to_edit, del_string):
@@ -168,8 +168,9 @@ def get_n5_dir(group_or_dataset_dir):
     for parent in iter_parents(group_or_dataset_path):
         if is_n5_path(parent):
             return str(parent)
+
+
     
-       
 class Preprocess(ags.ArgSchemaParser):
         
     def run(self):

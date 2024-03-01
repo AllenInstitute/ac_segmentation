@@ -34,7 +34,7 @@ class Predictor:
     def loadCheckpoint(self, checkpoint):
         self.getNet().load_state_dict(torch.load(checkpoint, map_location=self.device))
 
-    def run(self, input_volume, output_volume, batch_size=30, max_pix = None):
+    def run(self, input_volume, output_volume, batch_size=30, mini_batch_size=10, max_pix = None):
         
         self.setBatchSize(batch_size)
         with torch.no_grad():
@@ -67,10 +67,10 @@ class Predictor:
                         keep.append(batch[ind])
 
                 if isinstance(input_volume, TSArray):
-                    self.run_batch(keep, output_volume, input_volume.shift)
+                    self.run_batch(keep, output_volume, input_volume.shift, mini_batch_size=mini_batch_size)
 
                 else:
-                    self.run_batch(keep, output_volume)
+                    self.run_batch(keep, output_volume, mini_batch_size=mini_batch_size)
 
     def getBatchSize(self):
         return self.batch_size
@@ -78,14 +78,15 @@ class Predictor:
     def setBatchSize(self, batch_size):
         self.batch_size = batch_size
 
-    def run_batch(self, batch, output_volume, in_shift=[0,0,0]):
+    def run_batch(self, batch, output_volume, in_shift=[0,0,0], mini_batch_size=10):
         bounding_boxes, arrays = self.toTorch(batch)
         inputs = Variable(arrays).float()
 
         data_list = []
-        batch_list = [list(range(len(inputs)))[i:i+ int(len(batch)/10)]for i in range(0,len(inputs),int(len(batch)/10))]
+        n_list = range(len(inputs))
+        batch_list = [n_list[i:i + mini_batch_size] for i in range(0, len(n_list), mini_batch_size)]  
         for s_batch in batch_list:
-            st,end = s_batch[0], s_batch[-1]
+            st,end = int(s_batch[0]), int(s_batch[-1])
             outputs = self.getNet()(inputs[st:end])
             data_list += self.toData(outputs, bounding_boxes[st:end])
 

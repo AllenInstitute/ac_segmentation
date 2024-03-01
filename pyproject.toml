@@ -38,5 +38,6 @@ dependencies = [
     "kimimaro",
     "zarr",
     "argschema",
-    "tensorstore"
+    "tensorstore",
+    "shapely"
 ]
