@@ -13,47 +13,68 @@ import navis
 import copy
 import networkx as nx
 import itertools
-from uuid import UUID
 from pathlib import Path
+import concurrent
+from concurrent.futures import ThreadPoolExecutor
+import tarfile
+import uuid
+from io import BytesIO
+
 
 class ReconnectParameters(ags.ArgSchema):
-    input_file = ags.fields.InputFile(required=True, description='Input file')
-    output_dir = ags.fields.OutputDir(required=True, description='Output directory')
-    model_dir = ags.fields.InputDir(required=True, description = 'Model directory')
-    pxl_xyz = ags.fields.NumpyArray(dtype=float, required=False, 
-                           default=[0.812,0.812,0.704], description='pxl size in um')
+    in_skels = ags.fields.InputFile(required=True, description='Input skeletons, as navis objects, swc, or swc.gz')
+    cl = ags.fields.InputFile(required=True, description = 'Model File')
+    sc = ags.fields.InputFile(required=True, description = 'Scalar File')    
+    min_nodes = ags.fields.Int(dtype=int, required=False, default=10, description='Minimum skeleton node length')
+    prob_thresh = ags.fields.Float(dtype=float, required=False, default=0.5, description='Minimum probability allowed for merge model prediction')
+    resample = ags.fields.Int(dtype=int, required=False, default=2, description='Factor for upsampling skeletons')
+    smooth = ags.fields.Int(dtype=int, required=False, default=5, description='Window for smoothing skeletons')
+    query_dis = ags.fields.Int(dtype=int, required=False, default=10, description='Maximum query distance for matching end nodes')
+    min_collin = ags.fields.Float(dtype=float, required=False, default=.1, description='Minimum collinearity for finding skeleton merge pairs')
+            
 
-def reconnect(infile, swc_outdir, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=2, query_dis=10, min_collin=.1): 
-    if not os.path.isdir(swc_outdir):
-        os.mkdir(swc_outdir)
+def reconnect(in_skels, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=2, smooth=5, query_dis=10, min_collin=.1):     
+    # Open swc
+    if isinstance(in_skels, navis.core.neuronlist.NeuronList):
+      skels = in_skels
     
-    # Split branches 
-    morph_split = swc_split_branches(navis.read_swc(infile), os.path.join(swc_outdir, 'segments.swc'), 9)
+    elif in_skels.endswith('.gz'):
+      skels = read_navis_neurons_tar(in_skels)
+    
+    elif in_skels.endswith('.swc'):
+      skels = navis.read_swc(in_skels)
+      
+      
+    #check that neurons have unique IDS
+    if len(list(set(skels.name))) == 1:
+      for sk in skels:
+        sk.name = uuid.uuid1()
     
     # Upsample and smooth skeletons
-    resample = navis.resample_skeleton(morph_split, resample_to=resample)
-    smooth = navis.smooth_skeleton(resample, window=5)
+    if resample:
+      for neu in skels:
+        neu.nodes = neu.nodes.astype({'x': 'float64', 'y': 'float64', 'z': 'float64'})
+      skels = navis.resample_skeleton(skels, resample_to=resample)
+    if smooth:
+      skels = navis.smooth_skeleton(skels, window=smooth)
     
-    # Extract neuronlist from nodelist
-    neurons = extract_neuronlist(smooth, min_nodes)
-        
+    # Split branches 
+    skels = swc_split_branches(skels, min_nodes)
+    
     # Find pairs
-    pair_data_iter = find_pairs(neurons, sc, cl, query_dis=query_dis, min_collin=min_collin)
-        
+    pair_data_iter = find_pairs(skels, sc, cl, query_dis=query_dis, min_collin=min_collin)
+    
     # Merge segment pairs with prob above thresh
-    output_file = os.path.join(swc_outdir, 'connect_iter.swc') 
-    out_neurons, merge_list = merge_pairs(neurons, pair_data_iter, prob_thresh)
+    out_neurons, merge_list = merge_pairs(skels, pair_data_iter, prob_thresh)
         
-    #output swc file
-    tn_neurons = navis.TreeNeuron(out_neurons.nodes)
-    navis.write_swc(tn_neurons,'reconnected_skeletons')
-    return out_neurons
+    #output swc fn
+    return out_neurons, merge_list
             
             
-def load_swc(filepath):
-    "Load swc file as a N X 7 numpy array"
+def load_swc(in_fn):
+    "Load swc fn as a N X 7 numpy array"
     swc = []
-    with open(filepath) as f:
+    with open(in_fn) as f:
         lines = f.read().split("\n")
         for l in lines:
             if not l.startswith('#'):
@@ -66,18 +87,18 @@ def load_swc(filepath):
                     swc.append(cells)                
     return np.array(swc)                     
 
-def save_swc(filepath, swc):
-    with open(filepath, 'w') as f:
+def save_swc(in_fn, swc):
+    with open(in_fn, 'w') as f:
         f.write('#id,type,x,y,z,r,pid\n')
         for i in range(swc.shape[0]):
             f.write('%.0f %.0f %.0f %.0f %.0f %.3f %d\n' %tuple(swc[i, :].tolist()))
     
-def swc_multi_to_single(dirname, fname):
-    file_list = [f for f in os.listdir(dirname) if f.endswith('swc')] 
-    file_list.sort()
+def swc_multi_to_single(in_dir, fname):
+    fn_list = [f for f in os.listdir(in_dir) if f.endswith('swc')] 
+    fn_list.sort()
     trace_list = []
-    for f in file_list:
-        trace = load_swc(os.path.join(dirname, f))
+    for f in fn_list:
+        trace = load_swc(os.path.join(in_dir, f))
         trace_list.append(trace)
     offset = 0
     for i, trace in enumerate(trace_list):
@@ -91,15 +112,15 @@ def swc_multi_to_single(dirname, fname):
             trace_new = trace_i
         else:
             trace_new = np.concatenate((trace_new, trace_i))
-    save_swc(os.path.join(dirname,fname), trace_new)
+    save_swc(os.path.join(in_dir,fname), trace_new)
     
 
-def swc_multi_to_single_subdir(dirname, out_path): #this version pulls all SWCs from subdirectories as well
-    files = list(Path(dirname).rglob("*.swc" ))
-    file_list = [str(i) for i in files]
-    file_list.sort()
+def swc_multi_to_single_subdir(in_dir, out_path): #this version pulls all SWCs from subdirectories as well
+    fns = list(Path(in_dir).rglob("*.swc" ))
+    fn_list = [str(i) for i in fns]
+    fn_list.sort()
     trace_list = []
-    for f in file_list:
+    for f in fn_list:
         trace = load_swc(f)
         trace_list.append(trace)
     offset = 0
@@ -118,7 +139,7 @@ def swc_multi_to_single_subdir(dirname, out_path): #this version pulls all SWCs 
 
 
 
-def swc_prune(morph_in, outfile, pruning_threshold = 30,**kwargs):
+def swc_prune(morph_in, out_fn, pruning_threshold = 30,**kwargs):
     nodes_to_remove = set()
     prune_count = 0
     bifur_nodes = morph_in.branch_points
@@ -135,29 +156,36 @@ def swc_prune(morph_in, outfile, pruning_threshold = 30,**kwargs):
     new_nodes = morph_in.nodes[~morph_in.nodes['node_id'].isin(nodes_to_remove)]
     morph_in.nodes = new_nodes
     
-    navis.write_swc(morph_in, outfile)
+    navis.write_swc(morph_in, out_fn)
     return morph_in
 
 
-def swc_split_branches(morph_in, outfile, node_len):
-    # Find branching nodes
-    branch_nodes = list(morph_in.branch_points['node_id'])
-    nodes_to_remove = []
-
-    # Split branches
-    for i in branch_nodes:
-        children = list(morph_in.nodes.loc[morph_in.nodes['parent_id'] == i, 'node_id'])
-        for child in children:
-            morph_in.nodes.loc[morph_in.nodes['node_id'] == child, 'parent_id'] = -1
-    
-    # Remove segments that are smaller than a given node length
-    for tree in morph_in.subtrees:
-        if len(tree) < node_len:
-            nodes_to_remove.extend(tree)
-    morph_in.nodes = morph_in.nodes[~morph_in.nodes['node_id'].isin(nodes_to_remove)]
-    
-    navis.write_swc(morph_in, outfile)
-    return morph_in
+def swc_split_branches(morph_in, node_len):
+    out_neu = []
+    for neu in morph_in:
+        # Find branching nodes
+        branch_nodes = list(neu.branch_points['node_id'])
+        if len(branch_nodes) == 0:
+            if len(neu.nodes) >= node_len:
+                out_neu.append(neu)
+            continue
+        
+        # Split branches
+        for i in branch_nodes:
+            children = list(neu.nodes.loc[neu.nodes['parent_id'] == i, 'node_id'])
+            for child in children:
+                neu.nodes.loc[neu.nodes['node_id'] == child, 'parent_id'] = -1
+        
+        # Create new neurons out of cut segments
+        trees = neu.subtrees
+        for tree in trees:
+            tn = pd.DataFrame(neu.nodes[neu.nodes['node_id'].isin(tree)])
+            tn = navis.TreeNeuron(tn)
+            if len(tn.nodes) >= node_len:
+                out_neu.append(navis.NeuronList(tn))
+            
+    out_neu = navis.NeuronList(out_neu) 
+    return out_neu
 
 
 
@@ -175,7 +203,7 @@ def dfs_labeling(st_node, new_starting_id, modifying_dict, graph):
 
 
 
-def sort_swc(morph_in,outfile):
+def sort_swc(morph_in,out_fn):
     #using the root lists, pull the current node order, and pair with an enumerated list as a dictionary
     roots = morph_in.root
     old_ids = np.array([element for nestedlist in morph_in.subtrees for element in nestedlist]).reshape(-1, 1)
@@ -188,9 +216,9 @@ def sort_swc(morph_in,outfile):
     morph_in.nodes['node_id'] = morph_in.nodes.apply(lambda row: new_node_ids[row['node_id']], axis=1)
     morph_in.nodes = morph_in.nodes.sort_values(by=['node_id'])
     
-    #save to new file
+    #save to new fn
     out = morph_in.nodes.to_numpy()
-    np.savetxt(outfile, out[:,0:-1], fmt='%s') 
+    np.savetxt(out_fn, out[:,0:-1], fmt='%s') 
     
     return morph_in 
 
@@ -424,7 +452,8 @@ def merge_pairs(neuro_list, pair_data, thresh = 0.1):
     print('Pairs Merged: ', merge_num)
     return neuro_list, merge_list
 
-def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1):    
+def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1):
+    np.seterr(invalid='ignore')    
     #find end nodes and just roots nodes
     pts = neuro_list.nodes[neuro_list.nodes['type'].isin(['root', 'end'])]
     roots = list(pts[pts['type'].isin(['root'])]['node_id'])
@@ -551,6 +580,56 @@ def get_bfs_neighbor_nodes(n, node_id, num_nodes):
         raise NotImplementedError("only supports root and end nodes")
     return n.nodes[n.nodes.node_id.isin(node_ids)]
 
+def swap_dimensions(skels, dims=['x','z']):
+    out_skels = []
+    for sk in skels:
+        nodes = sk.nodes
+        nodes = nodes.rename(columns={dims[0]: dims[1], dims[1]: dims[0]})
+        out_skels.append(navis.NeuronList(nodes))
+    out_skels = navis.NeuronList(out_skels)
+    out_skels['soma'] = None
+    return out_skels
+
+def apply_transform_skeletons(skels, transform=[[1,0,0],[0,1,0],[0,0,1]]):
+    transform = np.array(transform)
+    #iterate through skeletons and apply transform
+    out_skels = []
+    for sk in skels:
+        xs,ys,zs = [],[],[]
+        nodes = sk.nodes
+        for index,row in nodes.iterrows():
+            x,y,z = np.dot(transform,np.array([row['x'],row['y'],row['z']]))
+            xs.append(x),ys.append(y),zs.append(z)
+        nodes['x'],nodes['y'],nodes['z'] = xs,ys,zs
+        out_skels.append(navis.NeuronList(nodes))
+    out_skels = navis.NeuronList(out_skels)
+    out_skels['soma'] = None
+    return out_skels
+
+def remove_translate_nodes(skels, trans=[0,0,0], bound_box=[0,0,0,0,0,0]):
+    out_sk = []
+    shift_x,shift_y,shift_z = trans
+    x1,x2,y1,y2,z1,z2 = bound_box
+    for sk in skels:
+        #find nodes within bounding box
+        drop_nodes = list(sk.nodes[sk.nodes['x'].between(x1,x2) & sk.nodes['y'].between(y1,y2) & sk.nodes['z'].between(z1,z2)]['node_id'])
+
+        #drop nodes from dataframe
+        if len(drop_nodes)>0:
+            sk.nodes['parent_id'] = sk.nodes['parent_id'].replace(drop_nodes,-1)
+            sk.nodes = sk.nodes[~sk.nodes['node_id'].isin(drop_nodes)]
+        if len(sk.nodes) <= 1:
+            continue
+
+        #adjust dimensions
+        sk.nodes['x'] = sk.nodes['x'] + shift_x
+        sk.nodes['y'] = sk.nodes['y'] + shift_y
+        sk.nodes['z'] = sk.nodes['z'] + shift_z
+        out_sk.append(navis.NeuronList(sk.nodes))
+
+    out_sk = navis.NeuronList(out_sk)
+    return out_sk
+
 def navis_to_morph(morph_in):
     neu = morph_in.nodes.drop(columns=['type'])
     neu = neu.rename(columns={"node_id": "id", "parent_id": "parent"})
@@ -571,15 +650,53 @@ def morph_to_navis(morph_in):
 
     return morph_out
     
+    
+def read_navis_neurons_tar(tar_fn, concurrency=10, preprocess_func=None):
+    preprocess_func = ((lambda x: x) if preprocess_func is None else preprocess_func)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=concurrency) as e:
+        futs = []
+        with tarfile.open(tar_fn, "r:gz") as t:
+            for m in t.getmembers():
+                swc_b = t.extractfile(m).read()
+                futs.append(e.submit(navis.io.read_swc, swc_b.decode()))
+        navis_neurons = navis.NeuronList([
+            preprocess_func(fut.result()) for
+            fut in concurrent.futures.as_completed(futs)])
+    return navis_neurons
+    
+    
+    
+def write_kimi_skels_tar(tar_fn, skels):
+    with tarfile.open(tar_fn, mode="w:gz") as t:
+        id = 1
+        for skel in skels:
+            bio = BytesIO(skel.to_swc().encode())
+            info = tarfile.TarInfo(name=f"{id}.swc")
+            info.size = len(bio.getbuffer())
+            t.addfile(tarinfo=info, fileobj=bio)
+            id += 1
+            
+def write_navis_skels_tar(tar_fn, skels):
+    with tarfile.open(tar_fn, mode="w:gz") as t:
+        for sk in skels:
+            id = sk.name
+            if 'label' not in sk.nodes:
+                sk.nodes.insert(1, 'label', list(np.zeros(len(sk.nodes))))
+            sk = sk.nodes[['node_id', 'label','x','y','z','radius','parent_id']].values.tolist()
+            sk = '\n'.join(str(x)[1:-1] for x in sk).replace(",", "")
+            bio = BytesIO(sk.encode())
+            info = tarfile.TarInfo(name=f"{id}.swc")
+            info.size = len(bio.getbuffer())
+            t.addfile(tarinfo=info, fileobj=bio)
 
             
 class Reconnect(ags.ArgSchemaParser):
-        
     def run(self):
-        reconnect(self.args['input_file'], self.args['output_dir'], self.args['model_dir'],
-        self.args['pxl_xyz'])
+        reconnect(self.args['in_skels'], self.args['cl'],self.args['sc'],
+        self.args['min_nodes'], self.args['prob_thresh'], self.args['resample'], 
+        self.args['smooth'], self.args['query_dis'], self.args['min_collin'])
    
         
 if __name__ == "__main__":
     mod = Reconnect(schema_type=ReconnectParameters)
-    mod.run()      
+    mod.run()       
