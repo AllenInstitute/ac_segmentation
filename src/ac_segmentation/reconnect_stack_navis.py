@@ -19,6 +19,8 @@ from concurrent.futures import ThreadPoolExecutor
 import tarfile
 import uuid
 from io import BytesIO
+import copy
+import pathos
 
 
 class ReconnectParameters(ags.ArgSchema):
@@ -33,42 +35,41 @@ class ReconnectParameters(ags.ArgSchema):
     min_collin = ags.fields.Float(dtype=float, required=False, default=.1, description='Minimum collinearity for finding skeleton merge pairs')
             
 
-def reconnect(in_skels, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=2, smooth=5, query_dis=10, min_collin=.1):     
-    # Open swc
-    if isinstance(in_skels, navis.core.neuronlist.NeuronList):
-      skels = in_skels
-    
-    elif in_skels.endswith('.gz'):
-      skels = read_navis_neurons_tar(in_skels)
-    
-    elif in_skels.endswith('.swc'):
-      skels = navis.read_swc(in_skels)
+def reconnect(skels, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=4, smooth=2, split=True, query_dis=10, min_collin=.1, bound_box=None):     
+    # load skeletons
+    if isinstance(skels, navis.core.neuronlist.NeuronList):
+      pass
+    else:
+      if skels.endswith('.gz'):
+        skels = read_navis_neurons_tar(skels)
+      elif skels.endswith('.swc'):
+        skels = navis.read_swc(skels)
       
-      
-    #check that neurons have unique IDS
-    if len(list(set(skels.name))) == 1:
-      for sk in skels:
-        sk.name = uuid.uuid1()
+    #make sure neurons have unique names
+    skels.set_neuron_attributes([str(x.id) for x in skels], 'name')
+    
+    if split==True:
+      # Split branches 
+      skels = swc_split_branches(skels, min_nodes=min_nodes)
     
     # Upsample and smooth skeletons
-    if resample:
+    if smooth:
       for neu in skels:
         neu.nodes = neu.nodes.astype({'x': 'float64', 'y': 'float64', 'z': 'float64'})
-      skels = navis.resample_skeleton(skels, resample_to=resample)
-    if smooth:
-      skels = navis.smooth_skeleton(skels, window=smooth)
-    
-    # Split branches 
-    skels = swc_split_branches(skels, min_nodes)
-    
+      skels = navis.smooth_skeleton(skels, window=smooth, parallel=True, progress=False)
+    if resample:
+      skels = navis.resample_skeleton(skels, resample_to=resample, parallel=True, progress=False)
+
     # Find pairs
-    pair_data_iter = find_pairs(skels, sc, cl, query_dis=query_dis, min_collin=min_collin)
-    
-    # Merge segment pairs with prob above thresh
-    out_neurons, merge_list = merge_pairs(skels, pair_data_iter, prob_thresh)
+    pair_data_iter = find_pairs(skels, sc, cl, query_dis=query_dis, min_collin=min_collin, bound_box=bound_box)
+
+    try:
+      # Merge segment pairs with prob above thresh
+      unmerged, merged = merge_pairs(skels, pair_data_iter, prob_thresh)
+    except:
+      unmerged, merged = skels, navis.NeuronList(None)              
         
-    #output swc fn
-    return out_neurons, merge_list
+    return unmerged, merged
             
             
 def load_swc(in_fn):
@@ -160,31 +161,31 @@ def swc_prune(morph_in, out_fn, pruning_threshold = 30,**kwargs):
     return morph_in
 
 
-def swc_split_branches(morph_in, node_len):
+def swc_split_branches(morph_in, min_nodes):
     out_neu = []
     for neu in morph_in:
+        # Skip if under minimum node length
+        if len(neu.nodes) < min_nodes:
+            continue
+
         # Find branching nodes
         branch_nodes = list(neu.branch_points['node_id'])
-        if len(branch_nodes) == 0:
-            if len(neu.nodes) >= node_len:
-                out_neu.append(neu)
-            continue
+        if len(branch_nodes) > 0:
+            # Split branches
+            for i in branch_nodes:
+                children = list(neu.nodes.loc[neu.nodes['parent_id'] == i, 'node_id'])
+                for child in children:
+                    neu.nodes.loc[neu.nodes['node_id'] == child, 'parent_id'] = -1
         
-        # Split branches
-        for i in branch_nodes:
-            children = list(neu.nodes.loc[neu.nodes['parent_id'] == i, 'node_id'])
-            for child in children:
-                neu.nodes.loc[neu.nodes['node_id'] == child, 'parent_id'] = -1
-        
-        # Create new neurons out of cut segments
-        trees = neu.subtrees
-        for tree in trees:
+        # Create new neurons out of subtrees
+        for tree in neu.subtrees:
             tn = pd.DataFrame(neu.nodes[neu.nodes['node_id'].isin(tree)])
             tn = navis.TreeNeuron(tn)
-            if len(tn.nodes) >= node_len:
+            if len(tn.nodes) >= min_nodes:
                 out_neu.append(navis.NeuronList(tn))
-            
-    out_neu = navis.NeuronList(out_neu) 
+
+    out_neu = navis.NeuronList(out_neu)
+    out_neu.set_neuron_attributes([str(x.id) for x in out_neu], 'name')
     return out_neu
 
 
@@ -416,8 +417,8 @@ def collinearity(ns, end_node_ids, num_nodes=(4, 49)):
     return cf
 
 
-def merge_pairs(neuro_list, pair_data, thresh = 0.1): 
-    pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < 0.5)[0])==0))]
+def merge_pairs(neuro_list, pair_data, thresh = 0.1, min_collin = 0.5): 
+    pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < min_collin)[0])==0))]
     if thresh is not None:
           pair_data = [x for x in pair_data if (x[1][0] > thresh)]
     merge_num = 0
@@ -442,18 +443,35 @@ def merge_pairs(neuro_list, pair_data, thresh = 0.1):
             group.append(neuro_list[neuro_list.id == neu])
             neuro_list = neuro_list[(neuro_list.id != neu)]
         new_neu = navis.stitch_skeletons(group, method='LEAFS')
-        neuro_list.append(new_neu)
-        merge_list.append(new_neu.name)
+        #reroot neuron to new end
+        end_node = list(new_neu.ends['node_id'])[0]
+        new_neu = navis.reroot_skeleton(new_neu, end_node, inplace=False)           
+        
+        #append to merge list
+        merge_list.append(new_neu)
         
     #reset soma to none
     for neu in neuro_list:
         neu.soma = None
         
     print('Pairs Merged: ', merge_num)
-    return neuro_list, merge_list
+    return neuro_list, navis.NeuronList(merge_list)
 
-def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1):
-    np.seterr(invalid='ignore')    
+def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1, bound_box=None, min_nodes=None):
+    np.seterr(invalid='ignore')
+    #filter if minimum nodes is provided
+    if min_nodes:
+        neuro_list = navis.NeuronList([x for x in neuro_list if x.n_nodes >= min_nodes])
+    
+    #filter if bounding box is provided
+    if bound_box:
+      vol = create_rectangle_volume(bound_box=bound_box)
+      filtered = navis.in_volume(neuro_list, vol)
+      filtered = [x for x in filtered if len(x.nodes)>=1]
+      filtered = list(navis.NeuronList(filtered).name)
+      neuro_list = navis.NeuronList([x for x in neuro_list if x.name in filtered])
+    
+    
     #find end nodes and just roots nodes
     pts = neuro_list.nodes[neuro_list.nodes['type'].isin(['root', 'end'])]
     roots = list(pts[pts['type'].isin(['root'])]['node_id'])
@@ -621,12 +639,13 @@ def remove_translate_nodes(skels, trans=[0,0,0], bound_box=[0,0,0,0,0,0]):
             sk.nodes = sk.nodes[~sk.nodes['node_id'].isin(drop_nodes)]
         if len(sk.nodes) <= 1:
             continue
-
+            
+        nodes = sk.nodes.copy()
         #adjust dimensions
-        sk.nodes['x'] = sk.nodes['x'] + shift_x
-        sk.nodes['y'] = sk.nodes['y'] + shift_y
-        sk.nodes['z'] = sk.nodes['z'] + shift_z
-        out_sk.append(navis.NeuronList(sk.nodes))
+        nodes['x'] = nodes['x'] + shift_x
+        nodes['y'] = nodes['y'] + shift_y
+        nodes['z'] = nodes['z'] + shift_z
+        out_sk.append(navis.NeuronList(nodes))
 
     out_sk = navis.NeuronList(out_sk)
     return out_sk
@@ -667,8 +686,8 @@ def read_navis_neurons_tar(tar_fn, concurrency=10, preprocess_func=None):
     
     
     
-def write_kimi_skels_tar(tar_fn, skels):
-    with tarfile.open(tar_fn, mode="w:gz") as t:
+def write_kimi_skels_tar(tar_fn, skels, mode='w:gz'):
+    with tarfile.open(tar_fn, mode=mode) as t:
         id = 1
         for skel in skels:
             bio = BytesIO(skel.to_swc().encode())
@@ -677,8 +696,8 @@ def write_kimi_skels_tar(tar_fn, skels):
             t.addfile(tarinfo=info, fileobj=bio)
             id += 1
             
-def write_navis_skels_tar(tar_fn, skels):
-    with tarfile.open(tar_fn, mode="w:gz") as t:
+def write_navis_skels_tar(tar_fn, skels, mode='w:gz'):
+    with tarfile.open(tar_fn, mode=mode) as t:
         for sk in skels:
             id = sk.name
             if 'label' not in sk.nodes:
@@ -689,6 +708,23 @@ def write_navis_skels_tar(tar_fn, skels):
             info = tarfile.TarInfo(name=f"{id}.swc")
             info.size = len(bio.getbuffer())
             t.addfile(tarinfo=info, fileobj=bio)
+            
+def read_multi_tar(dir_n, n_jobs=1):
+    def read_tar(file):
+        skels = read_navis_neurons_tar(file)
+        return [skels, file]
+    files = glob.glob(dir_n + "*.gz")
+    with parallel_config(backend="loky", inner_max_num_threads=1):
+        results = Parallel(n_jobs=n_jobs)(delayed(read_tar)(file=file) for file in files)
+    return results
+            
+            
+def create_rectangle_volume(bound_box):
+    x1,x2,y1,y2,z1,z2 = bound_box
+    vertices = [[x1,y1,z1],[x2,y2,z1],[x1,y2,z1],[x2,y1,z1],[x1,y1,z2],[x2,y2,z2],[x1,y2,z2],[x2,y1,z2]]
+    faces = [[0,1,2],[0,1,3],[4,5,6],[4,5,7],[0,4,6],[0,2,6],[3,7,5],[3,1,5],[2,1,5],[2,6,5],[0,3,4],[3,4,7]]
+    vol = navis.Volume(vertices, faces=faces)
+    return vol
 
             
 class Reconnect(ags.ArgSchemaParser):

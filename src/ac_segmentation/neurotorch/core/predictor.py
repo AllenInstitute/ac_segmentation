@@ -5,6 +5,7 @@ import joblib
 from joblib import Parallel, delayed
 from ac_segmentation.neurotorch.datasets.dataset import Data
 from ac_segmentation.preprocess import lut_preprocess_array
+from skimage import exposure
 
 import ac_segmentation.neurotorch.datasets.dataset
 from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
@@ -34,7 +35,7 @@ class Predictor:
     def loadCheckpoint(self, checkpoint):
         self.getNet().load_state_dict(torch.load(checkpoint, map_location=self.device))
 
-    def run(self, input_volume, output_volume, batch_size=30, mini_batch_size=10, max_pix = None):
+    def run(self, input_volume, output_volume, batch_size=30, mini_batch_size=10, max_pix = 65535):
         
         self.setBatchSize(batch_size)
         with torch.no_grad():
@@ -58,12 +59,15 @@ class Predictor:
                     if hasattr(input_volume, 'li_thresh'):
                         batch[ind].array[batch[ind].array < input_volume.li_thresh] = 0
 
+                    if hasattr(input_volume, 'rescale_perc'):
+                        p1, p2 = np.percentile(batch[ind].array, input_volume.rescale_perc)
+                        batch[ind].array = exposure.rescale_intensity(batch[ind].array, in_range=(p1, p2))
+
                     if hasattr(input_volume, 'mask'):
                         batch[ind].array = np.where(masks[ind].array, batch[ind].array, 0)
                         
                     if np.any(data.array) == True:
-                        if max_pix != None:
-                          batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
+                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
                         keep.append(batch[ind])
 
                 if isinstance(input_volume, TSArray):

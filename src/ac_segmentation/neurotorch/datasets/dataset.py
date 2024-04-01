@@ -15,12 +15,13 @@ import tifffile as tif
 import os
 
 
-def create_EmptyTensor(filepath, shape, dtype = 'uint16', chunk_shape = [64, 64, 64]):
+def create_EmptyTensor(filepath, shape, dtype = 'uint16', fill_value = -np.inf, chunk_shape = [64, 64, 64]):
     out_arr = ts.open({
      'driver': 'zarr',
      'kvstore': 'file://' + str(filepath),
      },
      dtype=dtype,
+     fill_value=fill_value,
      chunk_layout=ts.ChunkLayout(chunk_shape=chunk_shape),
      create=True,
      shape=list(shape)).result()
@@ -381,11 +382,11 @@ class TSArray(Array):
         dataset iterable
         :param stride: The stride displacement of each data sample in the
         dataset iterable. The displacement proceeds first from X then to Y then to Z.
-        :param prob_map: The array is a probability map or now (if using blend function)
         """
         if isinstance(tensor, ts.TensorStore):
             self.tensor = tensor
             self.shift = [list(tensor.domain[0])[0], list(tensor.domain[1])[0], list(tensor.domain[2])[0]]
+            self.dtype = str(self.tensor.dtype).split('"')[1]
             pass
         else:
             raise ValueError("Array must be a tensorstore object")
@@ -408,7 +409,7 @@ class TSArray(Array):
         x1, y1, z1 = edge1.getComponents()
         x2, y2, z2 = (min(s, c) for s, c in zip(self.tensor.shape[0:3][::-1], edge2.getComponents()))
 
-        return self.tensor[z1:z2, y1:y2, x1:x2].write(data_array[:z2-z1, :y2-y1, :x2-x1].astype('int16'))
+        return self.tensor[z1:z2, y1:y2, x1:x2].write(data_array[:z2-z1, :y2-y1, :x2-x1].astype(self.dtype))
 
     def setBoundingBox(self, bounding_box: BoundingBox=None,
                        displacement: Vector=None):
@@ -540,7 +541,7 @@ class TSArray(Array):
         data_array = data.getArray()
         
         if self.prob_map == True:
-            data_array = 255*torch.special.expit(torch.from_numpy(data_array)).numpy()
+            data_array = torch.special.expit(torch.from_numpy(data_array)).numpy()
         x,y,z = array.shape
         array = np.maximum(array, data_array[:x,:y,:z])
         result = Data(array, data_bb)
@@ -573,6 +574,9 @@ class TSArray(Array):
             self.li_thresh = li_thresh
         else:
             raise ValueError("Li threshold must be an integer or float")
+            
+    def set_Rescale_Perc(self, percentile=(70,100)):
+        self.rescale_perc = percentile
             
 
 
