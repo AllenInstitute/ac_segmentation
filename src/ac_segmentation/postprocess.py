@@ -9,6 +9,14 @@ from collections import deque, defaultdict
 from scipy import ndimage as ndi
 from skimage.morphology import remove_small_objects, skeletonize_3d
 import tifffile as tif
+import kimimaro
+import zarr
+import navis
+from pathlib import Path
+import colorsys
+from shapely import Polygon, Point
+import pandas as pd
+from ac_segmentation.reconnect_stack_navis import reconnect, swc_multi_to_single_subdir
 
 class PostprocessParameters(ags.ArgSchema):
     output_dir = ags.fields.OutputDir(required=True, description='Output directory')
@@ -99,6 +107,116 @@ def postprocess(outdir, chunk_size, overlap, threshold=0.2, size_threshold=2000)
                     morphology_to_swc(dict_out['morph'], os.path.join(chunkdir, f))
                 except:
                     print('error')
+
+                
+def postprocess_kimi_array(outdir, arr, bound_box = None, threshold=0.2, size_threshold=2000, check_rad=False, **kwargs):
+    
+    #set default keyword arguments
+    defaultKwargs = {'scale': 2, 'constant': 5, 'fill_holes' : False, 'parallel': 1, 'dust_threshold' : 10}
+    kwargs = { **defaultKwargs, **kwargs }
+    
+    savedir = os.path.join(outdir, 'swc_files_KIMI')
+    if not os.path.isdir(savedir):
+        os.mkdir(savedir)
+        
+    # Crop array to specified size
+    if bound_box:
+      new_arr_size = bound_box[2], bound_box[1], bound_box[0]  #zyx
+      arr = arr[0:new_arr_size[0],0:new_arr_size[1],0:new_arr_size[2]]
+      arr_size = arr.shape
+
+    # Zero values below threshold
+    arr[arr <= int(np.round(255*threshold))] = 0
+        
+    # Binarize array based on threshold
+    arr = (arr > int(np.round(255*threshold))).astype(np.uint8)
+
+    # Label connected components
+    s = ndi.generate_binary_structure(3,3)
+    arr = ndi.label(arr,structure=s)[0].astype(np.uint16)
+    num_cc = np.max(arr)
+
+    if num_cc != 0:
+        # Remove components smaller than size_threshold 
+        arr = remove_small_objects(arr, min_size=size_threshold, connectivity=3)
+        unique_labels, counts = np.unique(arr,return_counts=True)
+            
+        skels = kimimaro.skeletonize(
+            arr, 
+            teasar_params={
+            "scale": kwargs['scale'], 
+            "const": kwargs['constant'], # influences the finger branches allowed
+            "pdrf_scale": 10000,
+            "pdrf_exponent": 1,
+            "soma_acceptance_threshold": 3500, # physical units
+            "soma_detection_threshold": 750, # physical units
+            "soma_invalidation_const": 300, # physical units
+            "soma_invalidation_scale": 2,
+            "max_paths": 50, # default None
+            },
+            dust_threshold=kwargs['dust_threshold'], # skip connected components with fewer than this many voxels
+            anisotropy=(1,1,1), # default True #influences the dimension scale
+            fix_branching=True, # default True
+            fix_borders=True, # default True
+            fill_holes=kwargs['fill_holes'], # default False
+            fix_avocados=False, # default False
+            progress=True, # default False, show progress bar
+            parallel=kwargs['parallel'], # <= 0 all cpu, 1 single process, 2+ multiprocess
+            parallel_chunk_size=1, # how many skeletons to process before updating progress bar
+        )
+            
+    for key in skels.keys(): 
+        skels[key].vertices = skels[key].vertices[:, [2, 1,0]]
+        with open(outdir + '/swc_files_KIMI/' + str(skels[key].id).zfill(4) + '.swc', 'wt') as f:
+            f.write(skels[key].to_swc())  
+            
+def postprocess_kimi_zarr_strips(in_dir, outdir, sc, cl, strip_range, bound_box,
+                            prob_thresh = 0.1, match_query_dis = 20, min_collin=0.1, size_thresh = 500, thresh = 0.05):
+    
+    for strip in range(strip_range[0], strip_range[1]+1):
+        pos_dir = in_dir + 'Pos' + str(strip) + "/"
+        seg_data = zarr.open(pos_dir + 'Pos' + str(strip) + '_Segmented.zarr')
+        test_arr = np.transpose(seg_data)
+        
+        #run skeletonization
+        postprocess_kimi_array(outdir = pos_dir, stack = test_arr, bound_box = [bound_box[0], bound_box[1], bound_box[2]], chunk_size = [512, 512, 64], overlap = [512, 512, 64], threshold=thresh, size_threshold=size_thresh, check_rad=True)
+        skel_dir = pos_dir + "/swc_files_KIMI/"
+        skels = os.listdir(skel_dir)
+
+        #Convert all SWCs to a single SWC
+        all_skel = navis.read_swc(pos_dir, include_subdirs=True)
+        swc_multi_to_single_subdir(pos_dir, pos_dir + 'consolidated.swc' )
+        
+        #Break and reconnect skeletons
+        os.makedirs(pos_dir + "Reconnected/", exist_ok=True)
+        skels_rec = reconnect(infile = pos_dir + 'consolidated.swc', \
+                                    swc_outdir = pos_dir + "Reconnected/", cl = cl, sc = sc, \
+                                    min_nodes = 10, prob_thresh = prob_thresh, query_dis = match_query_dis, min_collin=min_collin)
+        
+        #Convert all SWCs to a single SWC
+        os.makedirs(outdir + "Skeletons/", exist_ok=True)
+        swc_multi_to_single_subdir(pos_dir + "Reconnected/reconnected_skeletons/",\
+                                   outdir + "Skeletons/Pos" + str(strip) + "_Skels.swc" ) 
+        
+        print("Position " + str(strip) + " Complete!")
+        
+        
+def get_skeleton_orient(swc_path, min_node):
+    skels = navis.read_swc(swc_path)
+    skels = extract_neuronlist(skels, min_node) 
+    for skel in skels:
+        skel.name = None
+    
+    #extract orientation from dotprop and add as column attribute to neuronlist
+    new_nl = []
+    for ex_sk in skels:
+        ex_sm_sk = ex_sk.copy()
+        ex_sm_dp = navis.make_dotprops(ex_sk)
+        ex_sm_sk.nodes["hsv"] = [colorsys.rgb_to_hsv(*(vec))[0] for vec in ex_sm_dp.vect+1]
+        new_nl.append(ex_sm_sk)
+    new_nl = navis.NeuronList(new_nl)
+    return new_nl
+        
             
 def load_stack(dirname):
     # Load image stack filenames
@@ -349,4 +467,4 @@ class Postprocess(ags.ArgSchemaParser):
         
 if __name__ == "__main__":
     mod = Postprocess(schema_type=PostprocessParameters)
-    mod.run()      
+    mod.run()       

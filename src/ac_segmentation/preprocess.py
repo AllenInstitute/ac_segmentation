@@ -7,7 +7,6 @@ import pathlib
 import posixpath
 from scipy.ndimage import affine_transform
 import tifffile as tif
-import z5py
 
 class PreprocessParameters(ags.ArgSchema):
     input_dir = ags.fields.InputDir(required=True, description='Input directory')
@@ -129,6 +128,13 @@ def create_input(stack_in, fname, Imax=65535):
     # Save stack as single tif file
     tif.imwrite(fname, stack_out) 
     return stack_out   
+    
+    
+def lut_preprocess_array(arr, max_int):
+    lut = np.empty(arr.max()+max_int, dtype="uint8")
+    lut[max_int:] = 255
+    lut[:max_int] = np.round(np.arange(max_int) * (255 / max_int))
+    return lut[arr]
 
 # General purpose helper methods
 def ldel(string_to_edit, del_string):
@@ -164,23 +170,6 @@ def get_n5_dir(group_or_dataset_dir):
             return str(parent)
 
 
-def miplevel_from_group_dir(group_dir, mip=0):
-    """
-    get the dataset associated with a mip level from an
-        n5 pyramid group directory
-    """
-    n5_dir = get_n5_dir(group_dir)
-    n5_rel_dir = ldel(group_dir, posixpath.join(n5_dir, ''))
-    groups = [*filter(None, n5_rel_dir.split("/"))]
-
-    f = z5py.File(n5_dir)
-    group_objs = []
-    for g in groups:
-        try:
-            group_objs.append(group_objs[-1][g])
-        except IndexError:
-            group_objs.append(f[g])
-    return group_objs[-1][f"s{mip}"]    
     
 class Preprocess(ags.ArgSchemaParser):
         

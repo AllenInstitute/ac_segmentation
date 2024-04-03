@@ -1,11 +1,51 @@
+import torch
 from torch.utils.data import Dataset as _Dataset
 import numpy as np
 from abc import abstractmethod
-from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
 from numbers import Number
 from numpy import ndarray
 from scipy.spatial import KDTree
 from functools import reduce
+import math
+import scipy
+import tensorstore as ts
+from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
+import h5py
+import tifffile as tif
+import os
+
+
+def create_EmptyTensor(filepath, shape, dtype = 'uint16', fill_value = -np.inf, chunk_shape = [64, 64, 64]):
+    out_arr = ts.open({
+     'driver': 'zarr',
+     'kvstore': 'file://' + str(filepath),
+     },
+     dtype=dtype,
+     fill_value=fill_value,
+     chunk_layout=ts.ChunkLayout(chunk_shape=chunk_shape),
+     create=True,
+     shape=list(shape)).result()
+    
+    return out_arr
+
+def open_ZarrTensor(filepath, bytes_limit= 100_000_000):
+    #Load tensorstore array
+    dataset_future = ts.open({
+         'driver':
+             'zarr',
+         'kvstore':
+             'file://' + str(filepath),
+     # Use 100MB in-memory cache.
+         'context': {
+             'cache_pool': {
+                 'total_bytes_limit': bytes_limit
+             }
+         },
+         'recheck_cached_data':
+         'open',
+     })
+
+    return dataset_future.result()
 
 
 class Data:
@@ -99,7 +139,8 @@ location in 3D-space
 
         return (self * (1/other))
 
-
+        
+        
 class Array:
     """
     A dataset containing a 3D volumetric array
@@ -324,6 +365,219 @@ origin
 
     def __exit__(self):
         pass
+        
+        
+class TSArray(Array):
+    
+    def __init__(self, tensor: ts.TensorStore, bounding_box: BoundingBox=None,
+                 iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),
+                                                         Vector(32, 32, 32)),
+                 stride: Vector=Vector(64, 64, 64), prob_map: bool=False):
+        """
+        Initializes a volume with a bounding box and iteration parameters
+
+        :param tensor: A 3D tensorstore object
+        :param bounding_box: The bounding box encompassing the volume
+        :param iteration_size: The bounding box of each data sample in the
+        dataset iterable
+        :param stride: The stride displacement of each data sample in the
+        dataset iterable. The displacement proceeds first from X then to Y then to Z.
+        """
+        if isinstance(tensor, ts.TensorStore):
+            self.tensor = tensor
+            self.shift = [list(tensor.domain[0])[0], list(tensor.domain[1])[0], list(tensor.domain[2])[0]]
+            self.dtype = str(self.tensor.dtype).split('"')[1]
+            pass
+        else:
+            raise ValueError("Array must be a tensorstore object")
+
+        self.setBoundingBox(bounding_box)
+        self.setIteration(iteration_size=iteration_size,
+                          stride=stride)
+        self.prob_map = prob_map
+        
+    def set(self, data):
+        """Allow dropping data off of improperly shaped arrays"""
+        data_bounding_box = data.getBoundingBox()
+        data_array = data.getArray()
+            
+        #get edge components 
+        data_edge1, data_edge2 = data_bounding_box.getEdges()
+        array_edge1, array_edge2 = self.getBoundingBox().getEdges()
+        edge1 = data_edge1 - array_edge1
+        edge2 = data_edge2 - array_edge1
+        x1, y1, z1 = edge1.getComponents()
+        x2, y2, z2 = (min(s, c) for s, c in zip(self.tensor.shape[0:3][::-1], edge2.getComponents()))
+
+        return self.tensor[z1:z2, y1:y2, x1:x2].write(data_array[:z2-z1, :y2-y1, :x2-x1].astype(self.dtype))
+
+    def setBoundingBox(self, bounding_box: BoundingBox=None,
+                       displacement: Vector=None):
+        """
+        Sets the bounding box of the volume. By default, it sets the bounding
+        box to the volume size
+
+        :param bounding_box: The bounding box of the volume
+        :param displacement: The displacement of the bounding box from the
+        origin
+        """
+        if bounding_box is None:
+            x1,y1,z1 = (list(self.tensor.domain[0])[0], list(self.tensor.domain[1])[0], list(self.tensor.domain[2])[0])
+            x2,y2,z2  = (list(self.tensor.domain[0])[-1]+1, list(self.tensor.domain[1])[-1]+1, list(self.tensor.domain[2])[-1]+1)
+            self.bounding_box = BoundingBox(Vector(z1,y1,x1),Vector(z2,y2,x2))
+            
+        else:
+            self.bounding_box = bounding_box
+
+        if displacement is not None:
+            self.bounding_box = self.bounding_box + displacement
+
+    def _indexToBoundingBox(self, idx):
+        if idx >= len(self):
+            self.index = 0
+            raise StopIteration
+
+        element_vec = np.unravel_index(idx,
+                                       shape=self.element_vec.getComponents())
+        element_vec = Vector(*element_vec)
+        bounding_box = self.iteration_size+self.stride*element_vec
+
+        if self.shift != [0,0,0]:
+            bounding_box.edge1 += Vector(*self.shift[::-1])
+            bounding_box.edge2 += Vector(*self.shift[::-1])
+
+        return bounding_box
+    
+    def __getitem__(self, idx):
+        bounding_box = self._indexToBoundingBox(idx)
+        result = self.get(bounding_box)
+        
+        return result
+
+    def _indexToTensor(self, idx):
+        if idx >= len(self):
+            self.index = 0
+            raise StopIteration
+
+        element_vec = np.unravel_index(idx,
+                                       shape=self.element_vec.getComponents())
+
+        element_vec = Vector(*element_vec)
+        bounding_box = self.iteration_size+self.stride*element_vec
+        edge1, edge2 = bounding_box.getEdges()
+        x1, y1, z1 = edge1.getComponents()
+        x2, y2, z2 = edge2.getComponents()
+        
+        return self.tensor[z1:z2,y1:y2,x1:x2]
+
+    def get(self, bounding_box: BoundingBox) -> Data:
+        """
+        Requests a data sample from the volume. If the bounding box does
+        not exist, then the method raises a ValueError.
+
+        :param bounding_box: The bounding box of the request data sample
+        :return: The data sample requested
+        """
+        if bounding_box.isDisjoint(self.getBoundingBox()):
+            error_string = ("Bounding box must be inside dataset " +
+                            "dimensions instead bounding box is {} while " +
+                            "the dataset dimensions are {}")
+            error_string = error_string.format(bounding_box,
+                                               self.getBoundingBox())
+            raise ValueError(error_string)
+
+        sub_bounding_box = bounding_box.intersect(self.getBoundingBox())
+        array = self.getArray(sub_bounding_box)
+
+        before_pad = bounding_box.getEdges()[0] - sub_bounding_box.getEdges()[0]
+        after_pad = bounding_box.getEdges()[1] - sub_bounding_box.getEdges()[1]
+
+        pad_size = ((0, 0), (0, 0), (0, 0))
+        if before_pad != Vector(0, 0, 0) or after_pad != Vector(0, 0, 0):
+            pad_size = tuple(zip(before_pad.getNumpyDim(),
+                                 after_pad.getNumpyDim()))
+
+        out_data = Data(array, bounding_box)
+        out_data.pad_size = pad_size
+        
+        return out_data
+
+    def getArray(self, bounding_box: BoundingBox=None) -> np.ndarray:
+        """
+        Retrieves the array contents of the volume. If a bounding box is
+        provided, the subsection is returned.
+
+        :param bounding_box: The bounding box of a subsection of the volume.
+        If the bounding box is outside of the volume, a ValueError is raised.
+        """
+        if bounding_box is None:
+            return self.tensor[z1:z2, y1:y2, x1:x2].read()
+
+        else:
+            if not bounding_box.isSubset(self.getBoundingBox()):
+                raise ValueError("The bounding box must be a subset" +
+                                 " of the volume")
+                
+            centered_bounding_box = bounding_box - self.getBoundingBox().getEdges()[0]
+            edge1, edge2 = centered_bounding_box.getEdges()
+            x1, y1, z1 = [sum(x) for x in zip(edge1.getComponents(),self.shift[::-1])]
+            x2, y2, z2 = [sum(x) for x in zip(edge2.getComponents(),self.shift[::-1])]
+
+            return self.tensor[z1:z2, y1:y2, x1:x2].read()
+
+    def blend(self, data: Data, shift):
+        """
+        Blends a section of the volume within the provided bounding box with
+        the given data by taking the elementwise maximum value.
+
+        :param data: The data packet to blend into the volume
+        """
+
+        v1 = data.bounding_box.edge1 - Vector(*shift[::-1])
+        v2 = data.bounding_box.edge2 - Vector(*shift[::-1])
+        data_bb = BoundingBox(v1,v2)
+        
+        array = self.get(data_bb).getArray().result()
+        data_array = data.getArray()
+        
+        if self.prob_map == True:
+            data_array = torch.special.expit(torch.from_numpy(data_array)).numpy()
+        x,y,z = array.shape
+        array = np.maximum(array, data_array[:x,:y,:z])
+        result = Data(array, data_bb)
+        write = self.set(result)
+        
+        return write
+        
+    def out_hdf5(self, dir):
+        hf = h5py.File(dir + 'Seg_Array.h5', 'w')
+        for i in range(self.tensor.shape[0]):
+            hf.create_dataset('z' + str(i), data=self.tensor[i,:,:].read().result())
+        hf.close()
+
+    def out_tiff(self, dir):
+        path = os.path.join(dir, 'Seg_Tiffs/')
+        os.mkdir(path) 
+        for i in range(self.tensor.shape[0]):
+            tif.imwrite(path + '%03d.tif'%i, self.tensor[i,:,:].read().result())
+
+    def setMask(self, mask):
+        if isinstance(mask, ts.TensorStore):
+            self.mask = TSArray(mask, stride=self.stride, iteration_size=self.iteration_size)
+        elif isinstance(mask, np.ndarray):
+            self.mask = Array(mask, stride=self.stride, iteration_size=self.iteration_size)
+        else:
+            raise ValueError("Mask must be a tensorstore object or numpy array")
+
+    def setLiThreshold(self, li_thresh):
+        if isinstance(li_thresh, int) or isinstance(li_thresh, float):
+            self.li_thresh = li_thresh
+        else:
+            raise ValueError("Li threshold must be an integer or float")
+            
+    def set_Rescale_Perc(self, percentile=(70,100)):
+        self.rescale_perc = percentile
+            
 
 
 class TorchVolume(_Dataset):
