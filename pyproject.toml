@@ -24,7 +24,7 @@ dependencies = [
     "numpy>=1.16.0",
     "scikit-build>=0.13",
     "cloud-files",
-    "torch==1.13.1",
+    "torch==2.2.0",
     "tifffile==2023.1.23.1",
     "h5py>=2.7.1",
     "psutil>=5.4.7",
@@ -34,4 +34,10 @@ dependencies = [
     "scikit-learn",
     "pandas",
     "joblib",
+    "navis",
+    "kimimaro",
+    "zarr",
+    "argschema",
+    "tensorstore",
+    "shapely"
 ]
