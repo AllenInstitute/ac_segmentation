@@ -124,6 +124,6 @@ if __name__ == "__main__":
     mod = SegmentSkeletonizeZarrModule()
     mod.run()
 
-__all__ == [
+__all__ = [
     "SegmentSkeletonizeZarrModule",
     "SegmentSkeletonizeZarrParameters"]
