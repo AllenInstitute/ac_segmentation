@@ -20,7 +20,6 @@ import tarfile
 import uuid
 from io import BytesIO
 import copy
-import pathos
 
 
 class ReconnectParameters(ags.ArgSchema):
@@ -35,7 +34,7 @@ class ReconnectParameters(ags.ArgSchema):
     min_collin = ags.fields.Float(dtype=float, required=False, default=.1, description='Minimum collinearity for finding skeleton merge pairs')
             
 
-def reconnect(skels, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=4, smooth=2, split=True, query_dis=10, min_collin=.1, bound_box=None):     
+def reconnect(skels, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=4, smooth=2, split=True, query_dis=10, min_collin=.1, bound_box=None, dis_end=0):     
     # load skeletons
     if isinstance(skels, navis.core.neuronlist.NeuronList):
       pass
@@ -44,9 +43,6 @@ def reconnect(skels, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=4, smoo
         skels = read_navis_neurons_tar(skels)
       elif skels.endswith('.swc'):
         skels = navis.read_swc(skels)
-      
-    #make sure neurons have unique names
-    skels.set_neuron_attributes([str(x.id) for x in skels], 'name')
     
     if split==True:
       # Split branches 
@@ -54,14 +50,12 @@ def reconnect(skels, cl, sc, min_nodes = 10, prob_thresh = 0.5, resample=4, smoo
     
     # Upsample and smooth skeletons
     if smooth:
-      for neu in skels:
-        neu.nodes = neu.nodes.astype({'x': 'float64', 'y': 'float64', 'z': 'float64'})
-      skels = navis.smooth_skeleton(skels, window=smooth, parallel=True, progress=False)
+      skels = smooth_skeletons(skels, window=smooth)
     if resample:
       skels = navis.resample_skeleton(skels, resample_to=resample, parallel=True, progress=False)
 
     # Find pairs
-    pair_data_iter = find_pairs(skels, sc, cl, query_dis=query_dis, min_collin=min_collin, bound_box=bound_box)
+    pair_data_iter = find_pairs(neuro_list=skels, sc=sc, cl=cl, query_dis=query_dis, min_collin=min_collin, bound_box=bound_box, dis_end=dis_end)
 
     try:
       # Merge segment pairs with prob above thresh
@@ -140,29 +134,14 @@ def swc_multi_to_single_subdir(in_dir, out_path): #this version pulls all SWCs f
 
 
 
-def swc_prune(morph_in, out_fn, pruning_threshold = 30,**kwargs):
-    nodes_to_remove = set()
-    prune_count = 0
-    bifur_nodes = morph_in.branch_points
-    
-    graph = morph_in.graph
-    for i,node in bifur_nodes.iterrows():
-        children = morph_in.nodes.loc[morph_in.nodes['parent_id'] == node['node_id']]
-        for i, child in children.iterrows():
-            child_remove_nodes, child_seg_length = bfs_tree(child['node_id'],graph)
-            if child_seg_length < pruning_threshold:
-                prune_count+=1
-                [nodes_to_remove.add(n) for n in child_remove_nodes]
-        
-    new_nodes = morph_in.nodes[~morph_in.nodes['node_id'].isin(nodes_to_remove)]
-    morph_in.nodes = new_nodes
-    
-    navis.write_swc(morph_in, out_fn)
-    return morph_in
+def swc_prune(skels, pruning_threshold = 10):
+    skels = navis.prune_twigs(skels, pruning_threshold)
+
+    return skels
 
 
 def swc_split_branches(morph_in, min_nodes):
-    out_neu = []
+    out_sk = []
     for neu in morph_in:
         # Skip if under minimum node length
         if len(neu.nodes) < min_nodes:
@@ -177,16 +156,17 @@ def swc_split_branches(morph_in, min_nodes):
                 for child in children:
                     neu.nodes.loc[neu.nodes['node_id'] == child, 'parent_id'] = -1
         
-        # Create new neurons out of subtrees
-        for tree in neu.subtrees:
-            tn = pd.DataFrame(neu.nodes[neu.nodes['node_id'].isin(tree)])
-            tn = navis.TreeNeuron(tn)
-            if len(tn.nodes) >= min_nodes:
-                out_neu.append(navis.NeuronList(tn))
+            # Break fragments
+            frag = navis.break_fragments(neu)
+            for fr in frag:
+                if len(fr.nodes) >= min_nodes:
+                    fr.id = uuid.uuid1()
+                    out_sk.append(fr)
+        else:
+            out_sk.append(neu)
 
-    out_neu = navis.NeuronList(out_neu)
-    out_neu.set_neuron_attributes([str(x.id) for x in out_neu], 'name')
-    return out_neu
+    out_sk = navis.NeuronList(out_sk)
+    return out_sk
 
 
 
@@ -222,8 +202,38 @@ def sort_swc(morph_in,out_fn):
     np.savetxt(out_fn, out[:,0:-1], fmt='%s') 
     
     return morph_in 
+    
+def sort_neurons(skels):
+    out_neu = navis.NeuronList(None)
+    for sk in skels:
+        f=1
+        if len(sk.nodes)<2:
+            continue
+        if len(sk.branch_points)>0:
+            out_neu.append(sk)
+            continue
+        if sk.nodes.iloc[0]['type']!='root' or sk.nodes.iloc[-1]['type']!='end':
+            sk.nodes.reset_index(drop=True, inplace=True)
+            ind_order = np.zeros(len(sk.nodes)).astype(int)
+            #get end node and starting parent id
+            end = sk.ends
+            end_ind = end.index[0]
+            ind_order[end_ind] = 0
+            par = list(end['parent_id'])[0]
+            while par!=-1:
+                nt = sk.nodes[sk.nodes.node_id==par]
+                nt_ind = nt.index[0]
+                ind_order[nt_ind] = f
+                f+=1
+                par = list(nt['parent_id'])[0]
 
-
+            s = pd.Series(ind_order)
+            sk.nodes.set_index(s, inplace=True)
+            sk.nodes.sort_index(inplace=True)
+            out_neu.append(sk)
+        else:
+            out_neu.append(sk)
+    return out_neu
 
 def bfs_tree(st_node,graph):
     "BFS tree traversal, returns nodes in segment and how many"
@@ -375,15 +385,24 @@ def connect_trees(nodes, morph_in):
     return morph_out
 
 
-def calculate_feature(ns, end_node_ids, num_nodes=(5, 50)):
-    end_coords = np.vstack([n.nodes[n.nodes.node_id == end_node_id][["x", "y", "z"]].to_numpy() for n, end_node_id in zip(ns, end_node_ids)])
-    
-    cvect = end_coords[1] - end_coords [0]
+def calculate_feature(ns, end_node_ids, num_nodes=(5, 50), dis_end=0):
+    alt_end_node_ids = np.copy(end_node_ids)
+    if dis_end != 0:
+        for ind,n in enumerate(alt_end_node_ids):
+            g = list(ns[ind].graph.nodes)
+            dif = abs(np.array([g[0],g[-1]])-n)
+            if len(g) > dis_end:
+              if dif[0] < dif[1]:
+                  alt_end_node_ids[ind] = g[0+dis_end]
+              else:
+                  alt_end_node_ids[ind] = g[-1-dis_end]
+                
+    end_coords = np.vstack([n.nodes[n.nodes.node_id == alt_end_node_id][["x", "y", "z"]].to_numpy() for n, alt_end_node_id in zip(ns, alt_end_node_ids)])
+    cvect = end_coords[1] - end_coords[0]
     cvect_norm = np.linalg.norm(cvect)
     cvect /= cvect_norm
     
     cf = []
-
     for num in num_nodes:
         for i, (n, end_node_id) in enumerate(zip(ns, end_node_ids)):
             nodes = get_bfs_neighbor_nodes(n, end_node_id, num)
@@ -416,19 +435,31 @@ def collinearity(ns, end_node_ids, num_nodes=(4, 49)):
             cf.append(np.dot(-vec, cvect))
     return cf
 
-
-def merge_pairs(neuro_list, pair_data, thresh = 0.1, min_collin = 0.5): 
-    pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < min_collin)[0])==0))]
-    if thresh is not None:
-          pair_data = [x for x in pair_data if (x[1][0] > thresh)]
+def merge_pairs(neuro_list, pair_data, thresh = None, min_collin = None, dist_check=False):
     merge_num = 0
     merge_list = []
+    if min_collin:
+        pair_data = [x for x in pair_data if ((len(np.where(x[1][2:6] < min_collin)[0])==0))]
+    if thresh:
+        pair_data = [x for x in pair_data if (x[1][0] > thresh)]
+    else:
+        pair_data = [x for x in pair_data]
     
-    #remove duplicates based on highest probability
-    pair_data  = pd.DataFrame([list(i[0]) + list(i[1]) for i in pair_data])
-    pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(0).sort_index()
-    pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(1).sort_index()
-    pair_data =  pair_data[pair_data[0] != pair_data[1]]
+    if dist_check==True:
+        pair_data  = pd.DataFrame([list(i[0]) + list(i[1]) for i in pair_data])
+        pair_data  = pair_data.sort_values(4, ascending=False).drop_duplicates(0).sort_index()
+        pair_data  = pair_data.sort_values(4, ascending=False).drop_duplicates(1).sort_index()
+    else:
+        pair_data  = pd.DataFrame([list(i[0]) + list(i[1]) for i in pair_data])
+        pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(0).sort_index()
+        pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(1).sort_index()
+        
+    #remove duplicates that are in both pre and post columns
+    rem = []
+    for ind,row in pair_data.iterrows():
+        if row[0] in list(pair_data[1]):
+            rem.append(ind)
+    pair_data = pair_data.drop(rem)
     
     #create graph object with pairs
     pairs = [(row[0][0],row[1][0]) for ind,row in pair_data.iterrows()]
@@ -442,10 +473,7 @@ def merge_pairs(neuro_list, pair_data, thresh = 0.1, min_collin = 0.5):
         for neu in com:
             group.append(neuro_list[neuro_list.id == neu])
             neuro_list = neuro_list[(neuro_list.id != neu)]
-        new_neu = navis.stitch_skeletons(group, method='LEAFS')
-        #reroot neuron to new end
-        end_node = list(new_neu.ends['node_id'])[0]
-        new_neu = navis.reroot_skeleton(new_neu, end_node, inplace=False)           
+        new_neu = navis.stitch_skeletons(group, method='LEAFS')     
         
         #append to merge list
         merge_list.append(new_neu)
@@ -457,7 +485,7 @@ def merge_pairs(neuro_list, pair_data, thresh = 0.1, min_collin = 0.5):
     print('Pairs Merged: ', merge_num)
     return neuro_list, navis.NeuronList(merge_list)
 
-def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1, bound_box=None, min_nodes=None):
+def find_pairs(neuro_list, query_dis=15, min_collin = 0.1, sc = None, cl = None, bound_box=None, min_nodes=None, dis_end=0):
     np.seterr(invalid='ignore')
     #filter if minimum nodes is provided
     if min_nodes:
@@ -465,15 +493,18 @@ def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1, bound_box=Non
     
     #filter if bounding box is provided
     if bound_box:
-      vol = create_rectangle_volume(bound_box=bound_box)
-      filtered = navis.in_volume(neuro_list, vol)
-      filtered = [x for x in filtered if len(x.nodes)>=1]
-      filtered = list(navis.NeuronList(filtered).name)
-      neuro_list = navis.NeuronList([x for x in neuro_list if x.name in filtered])
+      neuro_list = filter_skeletons(neuro_list,bound_box)
+      
+    #sort to ensure nodes are in end-to-root order  
+    neuro_list = sort_neurons(neuro_list)
     
-    
-    #find end nodes and just roots nodes
-    pts = neuro_list.nodes[neuro_list.nodes['type'].isin(['root', 'end'])]
+    #find end and root nodes
+    pts = pd.DataFrame(None)
+    for sk in neuro_list:
+        ends = sk.nodes.iloc[[0, -1]].copy()
+        ends['neuron']=sk.id
+        pts = pd.concat([pts, ends])
+    pts = pts[pts['type'].isin(['root','end'])]
     roots = list(pts[pts['type'].isin(['root'])]['node_id'])
     ids = dict(zip([i.id for i in neuro_list], list(range(0,len(neuro_list)))))
     
@@ -501,11 +532,11 @@ def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1, bound_box=Non
         candidate_end_node_ids = endpts_node_id[[p, q]]
     
         try:
-            cf = subfeat[str(candidate_neurons.name)]
+            cf = subfeat[str(candidate_neurons.id)]
             
         except:
-            cf = tuple(calculate_feature(candidate_neurons, candidate_end_node_ids))
-            subfeat[str(candidate_neurons.name)] = cf
+            cf = tuple(calculate_feature(candidate_neurons, candidate_end_node_ids, dis_end=dis_end))
+            subfeat[str(candidate_neurons.id)] = cf
             
         #skip pair if collinearity too low
         if len(np.where(np.array(cf[1:5]) < min_collin)[0]) > 0:
@@ -531,11 +562,11 @@ def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1, bound_box=Non
         
         for nn_neurons, nn_end_node_ids  in zip(p_knn_neurons, p_knn_end_node_ids):
             try:
-                cf = subfeat[str(nn_neurons[0].name) + str(nn_neurons[1].name)]
+                cf = subfeat[str(nn_neurons[0].id) + str(nn_neurons[1].id)]
                 
             except:
-                cf = tuple(calculate_feature(nn_neurons, nn_end_node_ids))
-                subfeat[str(nn_neurons[0].name) + str(nn_neurons[1].name)] = cf
+                cf = tuple(calculate_feature(nn_neurons, nn_end_node_ids, dis_end=dis_end))
+                subfeat[str(nn_neurons[0].id) + str(nn_neurons[1].id)] = cf
                 
             f += cf
             
@@ -552,23 +583,24 @@ def find_pairs(neuro_list, sc, cl, query_dis=15, min_collin = 0.1, bound_box=Non
 
         for nn_neurons, nn_end_node_ids  in zip(q_knn_neurons, q_knn_end_node_ids):
             try:
-                cf = subfeat[str(nn_neurons[0].name) + str(nn_neurons[1].name)]
+                cf = subfeat[str(nn_neurons[0].id) + str(nn_neurons[1].id)]
                 
             except:
-                cf = tuple(calculate_feature(nn_neurons, nn_end_node_ids))
-                subfeat[str(nn_neurons[0].name) + str(nn_neurons[1].name)] = cf
+                cf = tuple(calculate_feature(nn_neurons, nn_end_node_ids, dis_end=dis_end))
+                subfeat[str(nn_neurons[0].id) + str(nn_neurons[1].id)] = cf
         
             f += cf
         
-        #calculate probability
         f = np.array(f)
         #weird error in reconnect function with na in f array
         f[np.isnan(f)] = 0
-        x = sc.transform(f.reshape(1,-1))
-
-        prob = cl.predict_proba(x)[0][1]
-        pair_features[ (endpts_neuron_id[p],endpts_node_id[p]), (endpts_neuron_id[q], endpts_node_id[q])] = np.insert(f, 0, prob)
-
+        if sc and cl:
+            #calculate probability
+            x = sc.transform(f.reshape(1,-1))
+            prob = cl.predict_proba(x)[0][1]
+            pair_features[ (endpts_neuron_id[p],endpts_node_id[p]), (endpts_neuron_id[q], endpts_node_id[q])] = np.insert(f, 0, prob)
+        else:
+            pair_features[ (endpts_neuron_id[p],endpts_node_id[p]), (endpts_neuron_id[q], endpts_node_id[q])] = np.insert(f, 0, 0)
 
     pair_features = list(pair_features.items())
     return pair_features
@@ -583,8 +615,6 @@ def extract_neuronlist(morph_in, node_min):
     trees = morph_in.subtrees
     res = Parallel(n_jobs=4)(delayed(ind_neuron)(tree) for tree in trees if len(tree) >= node_min)
     neurons = navis.NeuronList(res)
-    for neu in neurons:
-        neu.name = neu.id
     
     return neurons
 
@@ -595,7 +625,7 @@ def get_bfs_neighbor_nodes(n, node_id, num_nodes):
     elif node_type =="end":
         node_ids = nx.traversal.bfs_tree(n.graph, node_id, depth_limit=num_nodes-1).nodes 
     else:
-        raise NotImplementedError("only supports root and end nodes")
+        raise NotImplementedError("only supports root and end nodes, not ",str(node_type))
     return n.nodes[n.nodes.node_id.isin(node_ids)]
     
     
@@ -625,29 +655,89 @@ def apply_transform_skeletons(skels, transform=[[1,0,0],[0,1,0],[0,0,1]]):
     out_skels['soma'] = None
     return out_skels
 
-def remove_translate_nodes(skels, trans=[0,0,0], bound_box=[0,0,0,0,0,0]):
-    out_sk = []
-    shift_x,shift_y,shift_z = trans
+def remove_cutout_nodes(skels, bound_box=[0,0,0,0,0,0]):
+    out_sk = navis.NeuronList(None)
     x1,x2,y1,y2,z1,z2 = bound_box
     for sk in skels:
         #find nodes within bounding box
-        drop_nodes = list(sk.nodes[sk.nodes['x'].between(x1,x2) & sk.nodes['y'].between(y1,y2) & sk.nodes['z'].between(z1,z2)]['node_id'])
-
+        nodes = sk.nodes.copy()
+        drop_nodes = list(nodes[nodes['x'].between(x1,x2) & nodes['y'].between(y1,y2) & nodes['z'].between(z1,z2)]['node_id'])
+        
         #drop nodes from dataframe
         if len(drop_nodes)>0:
-            sk.nodes['parent_id'] = sk.nodes['parent_id'].replace(drop_nodes,-1)
-            sk.nodes = sk.nodes[~sk.nodes['node_id'].isin(drop_nodes)]
-        if len(sk.nodes) <= 1:
-            continue
-            
+            nodes['parent_id'] = nodes['parent_id'].replace(drop_nodes,-1)
+            nodes = nodes[~nodes['node_id'].isin(drop_nodes)].copy()
+            if len(nodes) <= 1:
+                continue
+
+            nsk = navis.NeuronList(nodes.copy())  
+            frag = navis.break_fragments(nsk)
+            for fr in frag:
+                if len(fr.nodes) > 1:
+                    fr.id = uuid.uuid1()
+                    out_sk.append(fr)
+        else:
+            out_sk.append(sk)
+    return out_sk
+    
+def remove_overlap_nodes(skels):
+    duplicates = skels.nodes[skels.nodes.duplicated(keep='last')]
+    nodes = {}
+    for ind,row in duplicates.iterrows():
+        try:
+            nodes[str(row['neuron'])] += [row['node_id']]
+        except:
+            nodes[str(row['neuron'])] = [row['node_id']]
+    add = navis.NeuronList(None)
+    for key,value in nodes.items():
+        match = navis.NeuronList([x for x in skels if x.id==uuid.UUID(key)])
+        keep,change = match[0].copy(), match[1].copy()
+        change.id = uuid.uuid1()
+        skels = navis.NeuronList([x for x in skels if x.id!=uuid.UUID(key)])
+        add.append(navis.remove_nodes(change, value))
+        add.append(keep)
+    return navis.NeuronList([skels,add])
+    
+def translate_nodes(skels, trans=[0,0,0]):
+    out_sk = []
+    shift_x,shift_y,shift_z = trans
+    for sk in skels:  
         nodes = sk.nodes.copy()
         #adjust dimensions
         nodes['x'] = nodes['x'] + shift_x
         nodes['y'] = nodes['y'] + shift_y
         nodes['z'] = nodes['z'] + shift_z
-        out_sk.append(navis.NeuronList(nodes))
-
+        out_sk.append(navis.TreeNeuron(nodes))  
     out_sk = navis.NeuronList(out_sk)
+    return out_sk
+    
+def create_rectangle_volume(bound_box, name='volume'):
+    x1,x2,y1,y2,z1,z2 = bound_box
+    vertices = [[x1,y1,z1],[x2,y2,z1],[x1,y2,z1],[x2,y1,z1],[x1,y1,z2],[x2,y2,z2],[x1,y2,z2],[x2,y1,z2]]
+    faces = [[0,1,2],[0,1,3],[4,5,6],[4,5,7],[0,4,6],[0,2,6],[3,7,5],[3,1,5],[2,1,5],[2,6,5],[0,3,4],[3,4,7]]
+    vol = navis.Volume(vertices, faces=faces, name=name)
+    return vol
+    
+def filter_skeletons(skels,bound_box):
+    x1,x2,y1,y2,z1,z2 = bound_box
+    sub_neu = navis.NeuronList(None)
+    for sk in skels:
+        Pass = 0
+        for ind,row in sk.nodes.iterrows():
+            if row['x'] > x1 and row['x'] < x2:
+                if row['y'] > y1 and row['y'] < y2:
+                    if row['z'] > z1 and row['z'] < z2:
+                        Pass += 1
+        if Pass >= 1:
+            sub_neu.append(sk)
+    return sub_neu
+    
+def smooth_skeletons(skels, window=5):
+    skels = skels.copy()
+    out_sk = navis.NeuronList(None)
+    for ind,sk in enumerate(skels):
+        sk.nodes[['x','y','z']] = sk.nodes[['x','y','z']].rolling(window=window, min_periods=1).mean()
+        out_sk.append(sk)
     return out_sk
 
 def navis_to_morph(morph_in):
@@ -699,7 +789,7 @@ def write_kimi_skels_tar(tar_fn, skels, mode='w:gz'):
 def write_navis_skels_tar(tar_fn, skels, mode='w:gz'):
     with tarfile.open(tar_fn, mode=mode) as t:
         for sk in skels:
-            id = sk.name
+            id = sk.id
             if 'label' not in sk.nodes:
                 sk.nodes.insert(1, 'label', list(np.zeros(len(sk.nodes))))
             sk = sk.nodes[['node_id', 'label','x','y','z','radius','parent_id']].values.tolist()
@@ -717,15 +807,6 @@ def read_multi_tar(dir_n, n_jobs=1):
     with parallel_config(backend="loky", inner_max_num_threads=1):
         results = Parallel(n_jobs=n_jobs)(delayed(read_tar)(file=file) for file in files)
     return results
-            
-            
-def create_rectangle_volume(bound_box):
-    x1,x2,y1,y2,z1,z2 = bound_box
-    vertices = [[x1,y1,z1],[x2,y2,z1],[x1,y2,z1],[x2,y1,z1],[x1,y1,z2],[x2,y2,z2],[x1,y2,z2],[x2,y1,z2]]
-    faces = [[0,1,2],[0,1,3],[4,5,6],[4,5,7],[0,4,6],[0,2,6],[3,7,5],[3,1,5],[2,1,5],[2,6,5],[0,3,4],[3,4,7]]
-    vol = navis.Volume(vertices, faces=faces)
-    return vol
-
             
 class Reconnect(ags.ArgSchemaParser):
     def run(self):

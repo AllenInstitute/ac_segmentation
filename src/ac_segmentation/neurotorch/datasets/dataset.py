@@ -14,27 +14,80 @@ import h5py
 import tifffile as tif
 import os
 
+def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32', fill_value=-np.inf, 
+                       chunk_shape=[64, 64, 64], res=[1,1,1], scale=0, arr=None, AWS_Key=None, AWS_Secret_Key=None):
+    """Create a tensorstore object, with optional setting of array
+       driver: Type of file, including zarr, n5, precomputed
+       store: Type of source, including file, in-memory, s3
+       AWS Key, AWS_Secret_Key: Only applicable to s3 store
+    """
 
-def create_EmptyTensor(filepath, shape, dtype = 'uint16', fill_value = -np.inf, chunk_shape = [64, 64, 64]):
-    out_arr = ts.open({
-     'driver': 'zarr',
-     'kvstore': 'file://' + str(filepath),
-     },
-     dtype=dtype,
-     fill_value=fill_value,
-     chunk_layout=ts.ChunkLayout(chunk_shape=chunk_shape),
-     create=True,
-     shape=list(shape)).result()
-    
+    kvstore = {"driver": store,"path": fpath}
+    if store == 's3':
+        if not AWS_Key or not  AWS_Secret_Key:
+            raise TypeError("AWS_Key and AWS_Secret_Key required for the S3 store")
+        os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY']=AWS_Key, AWS_Secret_Key
+        bucket = fpath.split("/")[0]
+        path = fpath.replace(bucket+"/", '')
+        kvstore = {"driver": "s3","bucket": bucket ,"path": path}
+
+    if driver in ['zarr','n5']:
+        fill_value=None if driver=='n5' else fill_value
+        out_arr = ts.open({
+         'driver': driver,
+         'kvstore': kvstore,
+         },
+         dtype=dtype,
+         fill_value=fill_value,
+         chunk_layout=ts.ChunkLayout(chunk_shape=chunk_shape),
+         create=True,
+         shape=list(arr_shape)).result()
+
+    if driver == 'neuroglancer_precomputed':
+        arr_shape=list(arr_shape)+[1] if len(arr_shape)==3 else arr_shape
+        out_arr = ts.open(
+                    {
+                        "driver": "neuroglancer_precomputed",
+                        "kvstore": kvstore,
+                        "scale_metadata": {
+                            "resolution": res,
+                            "chunk_size": list(chunk_shape),
+                            "encoding": "raw",
+                            "key": "s" + str(scale)
+                        }
+                    },
+                    create=True,
+                    dtype=dtype,
+                    domain=ts.IndexDomain(
+                        shape=list(list(arr_shape)),
+                    )).result()
+
+        if arr:
+            out_arr.write(arr).result()
+        os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'] = '', ''
+        
     return out_arr
 
-def open_ZarrTensor(filepath, bytes_limit= 100_000_000):
+def open_tensor(fpath, driver='zarr', store='file', AWS_Key=None, AWS_Secret_Key=None, bytes_limit= 100_000_000):
+    """Open a tensorstore object.
+       driver: Type of file, including zarr, n5, precomputed
+       store: Type of source, including file, s3
+       AWS Key, AWS_Secret_Key: Only applicable to s3 store
+    """
+
+    kvstore = {"driver": store,"path": fpath}
+    if store == 's3':
+        if not AWS_Key or not  AWS_Secret_Key:
+            raise TypeError("AWS_Key and AWS_Secret_Key required for the S3 store")
+        os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY']=AWS_Key, AWS_Secret_Key
+        bucket = fpath.split("/")[0]
+        path = fpath.replace(bucket+"/", '')
+        kvstore = {"driver": "s3","bucket": bucket ,"path": path}
     #Load tensorstore array
     dataset_future = ts.open({
          'driver':
-             'zarr',
-         'kvstore':
-             'file://' + str(filepath),
+             driver,
+         'kvstore': kvstore,
      # Use 100MB in-memory cache.
          'context': {
              'cache_pool': {
@@ -45,7 +98,11 @@ def open_ZarrTensor(filepath, bytes_limit= 100_000_000):
          'open',
      })
 
+    os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'] = '', ''
     return dataset_future.result()
+
+create_EmptyTensor = create_tensor  
+open_ZarrTensor = open_tensor
 
 
 class Data:
