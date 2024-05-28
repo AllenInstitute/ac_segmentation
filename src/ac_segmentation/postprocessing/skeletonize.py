@@ -2,9 +2,9 @@ import itertools
 
 import joblib
 import numpy
-import scipy.ndimage
 import scipy.spatial
 import skimage.morphology
+import cc3d
 
 import cloudvolume
 import kimimaro
@@ -13,19 +13,13 @@ np = numpy
 
 
 def label_binary_array(binary_arr, size_threshold=200):
-    struct = scipy.ndimage.generate_binary_structure(3, 3)
-    labeled_arr = numpy.empty(binary_arr.shape, dtype=numpy.uint32)
-    num_features = scipy.ndimage.label(
-        binary_arr, structure=struct, output=labeled_arr)
-
-    if num_features:
+    
+    labeled_arr, num_features = cc3d.connected_components(binary_arr, connectivity=6, return_N=True)
+    if num_features > 1:
         labeled_arr = skimage.morphology.remove_small_objects(
-            labeled_arr, min_size=size_threshold,
-            connectivity=3, out=labeled_arr
-        )
-
-    # TODO do we want to indicate the final number of labels?
-    return labeled_arr, num_features
+            labeled_arr, min_size=size_threshold, connectivity=3, out=labeled_arr)
+        
+    return labeled_arr, len(np.unique(labeled_arr))
 
 
 def threshold_binarize_array(arr, threshold=0.05):

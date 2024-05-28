@@ -40,5 +40,6 @@ dependencies = [
     "argschema",
     "tensorstore",
     "shapely",
-    "scipy"
+    "scipy",
+    "connected-components-3d"
 ]
