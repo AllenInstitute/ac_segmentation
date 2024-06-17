@@ -39,5 +39,7 @@ dependencies = [
     "zarr",
     "argschema",
     "tensorstore",
-    "shapely"
+    "shapely",
+    "scipy",
+    "connected-components-3d"
 ]
