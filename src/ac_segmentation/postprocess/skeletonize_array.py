@@ -161,5 +161,4 @@ def skeletonize_labeled_array_concurrent(
         )
     out_skels = [i for i in results if i is not None]
     
-    joined_skels = join_components(out_skels, radius=skel_search_radius)
-    return joined_skels
+    return out_skels

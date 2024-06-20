@@ -67,7 +67,8 @@ class Predictor:
                         batch[ind].array = np.where(masks[ind].array, batch[ind].array, 0)
                         
                     if np.any(data.array) == True:
-                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
+                        if max_pix != None:
+                            batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
                         keep.append(batch[ind])
 
                 if isinstance(input_volume, TSArray):

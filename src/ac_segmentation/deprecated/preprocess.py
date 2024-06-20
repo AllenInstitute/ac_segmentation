@@ -129,12 +129,6 @@ def create_input(stack_in, fname, Imax=65535):
     tif.imwrite(fname, stack_out) 
     return stack_out   
     
-    
-def lut_preprocess_array(arr, max_int):
-    lut = np.empty(arr.max()+max_int, dtype="uint8")
-    lut[max_int:] = 255
-    lut[:max_int] = np.round(np.arange(max_int) * (255 / max_int))
-    return lut[arr]
 
 # General purpose helper methods
 def ldel(string_to_edit, del_string):

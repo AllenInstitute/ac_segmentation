@@ -8,14 +8,14 @@ import pathlib
 import argschema
 import numpy
 
-from ac_segmentation.postprocessing.skeletonize import (
+from ac_segmentation.postprocess.skeletonize_array import (
     label_binary_array, threshold_binarize_array,
     skeletonize_labeled_array_concurrent
 )
 from ac_segmentation.utils.io import (
     gzip_array, write_cv_skels_iter_tar
 )
-from ac_segmentation.predict.predict_array import (
+from ac_segmentation.process.segment_array import (
     predict_zarr_ts
 )
 
