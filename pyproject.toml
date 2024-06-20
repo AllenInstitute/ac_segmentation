@@ -40,5 +40,6 @@ dependencies = [
     "tensorstore",
     "shapely",
     "scipy",
-    "connected-components-3d"
+    "connected-components-3d",
+    "navis"
 ]
