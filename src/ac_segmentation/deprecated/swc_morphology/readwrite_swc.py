@@ -1,5 +1,5 @@
 import pandas as pd
-from ac_segmentation.swc_morphology.classes import Morphology
+from ac_segmentation.deprecated.swc_morphology.classes import Morphology
 from cloudfiles import CloudFiles
 import io
 import os

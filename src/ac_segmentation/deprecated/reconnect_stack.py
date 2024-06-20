@@ -8,8 +8,8 @@ from joblib import dump, load
 import copy
 from sklearn.neighbors import KDTree
 from scipy.spatial.distance import euclidean
-from ac_segmentation.swc_morphology.classes import Morphology
-from ac_segmentation.swc_morphology.readwrite_swc import morphology_from_swc, morphology_to_swc
+from ac_segmentation.deprecated.swc_morphology.classes import Morphology
+from ac_segmentation.deprecated.swc_morphology.readwrite_swc import morphology_from_swc, morphology_to_swc
 
 class ReconnectParameters(ags.ArgSchema):
     input_file = ags.fields.InputFile(required=True, description='Input file')
