@@ -154,11 +154,21 @@ def skeletonize_labeled_array_concurrent(
     comb2 = list(itertools.product(eind_x, eind_y, eind_z))
     del sind_x, sind_y, sind_z, eind_x, eind_y, eind_z
 
-    with joblib.parallel_config(backend="loky", inner_max_num_threads=2):
-        results = joblib.Parallel(n_jobs=n_jobs)(
-            joblib.delayed(skel_chunk)(x, y)
-            for x, y in zip(comb1, comb2)
-        )
-    out_skels = [i for i in results if i is not None]
-    
+    #skeletonize
+    if len(comb1) == 1:
+        res = skel_chunk(comb1[0], comb2[0])
+    else:
+        with joblib.parallel_config(backend="loky", inner_max_num_threads=1):
+            res = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(skel_chunk)(x, y) for x, y in zip(comb1,comb2))
+
+    #extract individual skeletons
+    out_skels = []
+    if isinstance(res,cloudvolume.skeleton.Skeleton):
+        out_skels = res.components()
+
+    else:
+        res = [i for i in res if i is not None]
+        for sk in res:
+                out_skels += sk.components()
+
     return out_skels
