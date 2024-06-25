@@ -41,5 +41,6 @@ dependencies = [
     "shapely",
     "scipy",
     "connected-components-3d",
-    "navis"
+    "navis",
+    "docker"
 ]
