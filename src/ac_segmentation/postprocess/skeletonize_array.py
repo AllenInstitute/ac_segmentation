@@ -5,9 +5,13 @@ import numpy
 import scipy.spatial
 import skimage.morphology
 import cc3d
+import argschema
 
 import cloudvolume
 import kimimaro
+
+from ac_segmentation.utils.tensorstore import open_tensor
+from ac_segmentation.utils.io import (write_cv_skels_iter_tar)
 
 np = numpy
 
@@ -172,3 +176,68 @@ def skeletonize_labeled_array_concurrent(
                 out_skels += sk.components()
 
     return out_skels
+
+
+def run(input_zarr, skeleton_output_path, probability_threshold=0.05,
+        label_size_threshold=80, skeletonize_options=None):
+    skeletonize_options = ({} if skeletonize_options is None
+                           else skeletonize_options)
+                           
+    # Load segmentation
+
+    prob_map = open_tensor(input_zarr).read().result()
+    prob_map = prob_map[0:288,0:288,0:288]
+    print(prob_map.shape)
+
+    # binarize volume, label, and skeletonize
+    binary_arr = threshold_binarize_array(
+        prob_map, threshold=probability_threshold)
+    labeled_arr, _ = label_binary_array(
+        binary_arr, size_threshold=label_size_threshold)
+
+    # skels = skeletonize_labeled_array(labeled_arr, **skeletonize_options)
+    skels = skeletonize_labeled_array_concurrent(
+        labeled_arr, **skeletonize_options
+    )
+
+    # write skeletons to swc zip
+    # write_kimi_skels_tar(skeleton_output_path, skels)
+    write_cv_skels_iter_tar(skeleton_output_path, skels)
+
+
+class SkeletonizationOptions(argschema.schemas.DefaultSchema):
+    n_jobs = argschema.fields.Int(required=False, allow_none=True)
+
+
+class SkeletonizeZarrParameters(argschema.ArgSchema):
+    input_zarr = argschema.fields.InputDir(required=True)
+    skeleton_output = argschema.fields.OutputFile(required=True)
+    probability_threshold = argschema.fields.Float(
+        required=False, default=0.05)
+    label_size_threshold = argschema.fields.Int(required=False, default=80)
+    skeletonize_options = argschema.fields.Nested(
+        SkeletonizationOptions, required=False, default=None, allow_none=True)
+
+
+class SkeletonizeZarrModule(argschema.ArgSchemaParser):
+    default_schema = SkeletonizeZarrParameters
+
+    @property
+    def skeletonize_options(self):
+        return self.args["skeletonize_options"]    
+
+    def run(self):
+        run(self.args["input_zarr"],
+            self.args["skeleton_output"],
+            self.args["probability_threshold"],
+            self.args["label_size_threshold"],
+            self.skeletonize_options)
+
+
+if __name__ == "__main__":
+    mod = SkeletonizeZarrModule()
+    mod.run()
+
+__all__ = [
+    "SkeletonizeZarrModule",
+    "SkeletonizeZarrParameters"]
