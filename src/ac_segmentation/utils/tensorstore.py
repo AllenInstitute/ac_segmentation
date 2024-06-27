@@ -7,7 +7,6 @@ import os
 import json
 import boto3
 
-
 def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32', fill_value=-np.inf, 
                        chunk_shape=[64, 64, 64], res=[1,1,1], scale=0, arr=None, AWS_Key=None, AWS_Secret_Key=None):
     """Create a tensorstore object, with optional setting of array
@@ -15,7 +14,8 @@ def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32'
        store: Type of source, including file, in-memory, s3
        AWS Key, AWS_Secret_Key: Only applicable to s3 store
     """
-
+    if 'int' in dtype:
+        fill_value=0
     kvstore = {"driver": store,"path": fpath}
     if store == 's3':
         if not AWS_Key or not  AWS_Secret_Key:
@@ -56,10 +56,10 @@ def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32'
                         shape=list(list(arr_shape)),
                     )).result()
 
-        if arr:
-            out_arr.write(arr).result()
-        os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'] = '', ''
+    if isinstance(arr, np.ndarray):
+        out_arr.write(arr).result()
         
+    os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'] = '', ''
     return out_arr
 
 def open_tensor(fpath, driver='zarr', store='file', AWS_Key=None, AWS_Secret_Key=None, bytes_limit= 100_000_000):

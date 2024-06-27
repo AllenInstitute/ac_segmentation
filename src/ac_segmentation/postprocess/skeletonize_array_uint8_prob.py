@@ -6,7 +6,7 @@ import pathlib
 import argschema
 import numpy
 
-from ac_segmentation.postprocessing.skeletonize import (
+from ac_segmentation.postprocess.skeletonize_array import (
     label_binary_array, threshold_binarize_array,
     skeletonize_labeled_array_concurrent
 )

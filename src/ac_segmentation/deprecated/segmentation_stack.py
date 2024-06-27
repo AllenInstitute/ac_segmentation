@@ -1,13 +1,21 @@
-from ac_segmentation.neurotorch.nets.RSUNet import RSUNet
-from ac_segmentation.neurotorch.core.predictor import Predictor
-from ac_segmentation.neurotorch.datasets.filetypes import TiffVolume
-from ac_segmentation.neurotorch.datasets.dataset import Array
-from ac_segmentation.neurotorch.datasets.datatypes import (BoundingBox, Vector)
 import numpy as np
 import tifffile as tif
 import os
 import glob
 import argparse
+
+import ac_segmentation.neurotorch.datasets.datatypes
+import ac_segmentation.neurotorch.datasets.dataset
+import ac_segmentation.neurotorch.nets.RSUNet
+import ac_segmentation.neurotorch.core.predictor
+import ac_segmentation.neurotorch.datasets.filetypes
+
+Predictor = ac_segmentation.neurotorch.core.predictor.Predictor
+Vector = ac_segmentation.neurotorch.datasets.datatypes.Vector
+BoundingBox = ac_segmentation.neurotorch.datasets.datatypes.BoundingBox
+Array = ac_segmentation.neurotorch.datasets.dataset.Array
+RSUNet = ac_segmentation.neurotorch.nets.RSUNet.RSUNet
+TiffVolume = ac_segmentation.neurotorch.datasets.filetypes.TiffVolume
 
 def validate(checkpoint, test_dir, out_dir, bb, num_parts):
     # Initialize the U-Net architecture

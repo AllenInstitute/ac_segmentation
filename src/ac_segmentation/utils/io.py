@@ -11,10 +11,12 @@ def gzip_array(fn, arr):
         numpy.save(f, arr)
 
 
-def read_gzip_array(fn):
+def read_gzip_array(fn, preprocess_func=None):
     with gzip.open(fn, "rb") as f:
-        a = numpy.load(f)
-    return a
+        x = numpy.load(f)
+    if preprocess_func:
+        x = preprocess_func(x)
+    return x
 
 
 # FIXME CL code does not preserve ids

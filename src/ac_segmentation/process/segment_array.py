@@ -6,11 +6,13 @@ try:
 except ImportError:
     pass
 
+import ac_segmentation
 import ac_segmentation.neurotorch.datasets.datatypes
 import ac_segmentation.neurotorch.datasets.dataset
 import ac_segmentation.neurotorch.nets.RSUNet
 import ac_segmentation.neurotorch.core.predictor
 from ac_segmentation.utils.tensorstore import open_ZarrTensor
+from ac_segmentation.utils.preprocess import lut_preprocess_array
 
 
 Predictor = ac_segmentation.neurotorch.core.predictor.Predictor
@@ -22,13 +24,6 @@ RSUNet = ac_segmentation.neurotorch.nets.RSUNet.RSUNet
 np = numpy
 
 ONE_GiB = 1_000_000_000
-
-
-def lut_preprocess_array(arr, max_int):
-    lut = np.empty(arr.max() + max_int, dtype="uint8")
-    lut[max_int:] = 255
-    lut[:max_int] = np.round(np.arange(max_int) * (255 / max_int))
-    return lut[arr]
 
 
 def predict_array(
