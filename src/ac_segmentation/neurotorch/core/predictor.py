@@ -4,7 +4,7 @@ import numpy as np
 import joblib
 from joblib import Parallel, delayed
 from ac_segmentation.neurotorch.datasets.dataset import Data
-from ac_segmentation.preprocess import lut_preprocess_array
+from ac_segmentation.utils.preprocess import lut_preprocess_array
 from skimage import exposure
 
 import ac_segmentation.neurotorch.datasets.dataset
