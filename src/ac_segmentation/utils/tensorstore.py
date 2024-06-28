@@ -16,6 +16,8 @@ def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32'
     """
     if 'int' in dtype:
         fill_value=0
+    if isinstance(arr, np.ndarray):
+        arr = arr.astype(dtype)
     kvstore = {"driver": store,"path": fpath}
     if store == 's3':
         if not AWS_Key or not  AWS_Secret_Key:

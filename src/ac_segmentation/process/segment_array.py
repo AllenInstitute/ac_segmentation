@@ -66,7 +66,11 @@ def predict_zarr_ts(zarr_loc, weights_file, level=0,
                     iter_size=BoundingBox(Vector(0, 0, 0), Vector(64, 64, 64)),
                     stride=Vector(32, 32, 32),
                     batch_size=80, gpu_device=None):
-    in_ts = open_ZarrTensor(f"{zarr_loc}/{level}", bytes_limit=bytes_limit)
+    try:
+      in_ts = open_ZarrTensor(f"{zarr_loc}/{level}", bytes_limit=bytes_limit)
+    except:
+      in_ts = open_ZarrTensor(zarr_loc, bytes_limit=bytes_limit)
+    
     in_ts = numpy.transpose(in_ts[0, 0, ...])
     in_arr = TSArray(in_ts, iteration_size=iter_size, stride=stride)
     out_arr = Array(

@@ -167,9 +167,10 @@ def skeletonize_labeled_array_concurrent(
 
     #extract individual skeletons
     out_skels = []
-    if isinstance(res,cloudvolume.skeleton.Skeleton):
+    if res==None:
+        pass
+    elif isinstance(res,cloudvolume.skeleton.Skeleton):
         out_skels = res.components()
-
     else:
         res = [i for i in res if i is not None]
         for sk in res:
