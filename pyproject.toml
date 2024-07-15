@@ -6,38 +6,22 @@ requires = [
     "numpy>=1.16.0",
     "scipy>=1.1.0",
     "setuptools-scm",
-    "pybind11>=2.2.3"
+    "pybind11>=2.2.3",
+    "pytest",
+    "pytest-cov",
+    "pytest-mock"
 ]
 build-backend = "setuptools.build_meta"
 
 
 [project]
+
 name = "ac_segmentation"
 authors = [
     {name = "Olga Gliko"},
 ]
 description = "Segmentation for Axonal Connectomics"
+dynamic = ["version","dependencies"]
 
-dynamic = ["version"]
-
-dependencies = [
-    "numpy>=1.16.0",
-    "scikit-build>=0.13",
-    "cloud-files",
-    "torch==2.2.0",
-    "tifffile==2023.1.23.1",
-    "h5py>=2.7.1",
-    "psutil>=5.4.7",
-    "natsort>=7.0.0",
-    "opencv-python-headless",
-    "scikit-image>=0.14.2",
-    "scikit-learn",
-    "pandas",
-    "joblib",
-    "navis",
-    "kimimaro",
-    "zarr",
-    "argschema",
-    "tensorstore",
-    "shapely"
-]
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
