@@ -14,7 +14,7 @@ def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32'
        store: Type of source, including file, in-memory, s3
        AWS Key, AWS_Secret_Key: Only applicable to s3 store
     """
-    if 'int' in dtype:
+    if 'int' in str(dtype):
         fill_value=0
     if isinstance(arr, np.ndarray):
         arr = arr.astype(dtype)

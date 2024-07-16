@@ -12,6 +12,7 @@ from ac_segmentation.postprocess.skeletonize_array import (
     label_binary_array, threshold_binarize_array,
     skeletonize_labeled_array_concurrent
 )
+
 from ac_segmentation.utils.io import (
     gzip_array, write_cv_skels_iter_tar
 )

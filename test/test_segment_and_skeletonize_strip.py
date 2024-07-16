@@ -5,7 +5,7 @@ from ac_segmentation.process.segment_and_skeletonize_strip import run
 
 
 def test_seg_skel(zarr_file):
-    path = os.path.dirname(os.path.realpath(__file__)).split("src")[0]
+    path = os.path.normpath(os.path.dirname(os.path.realpath(__file__)) + os.sep + os.pardir)
     weights = glob.glob(f"{path}/**/{'best.ckpt'}", recursive=True)[0]
     run(weights_file=weights, 
         input_zarr=zarr_file+"test_zarr.zarr", 
