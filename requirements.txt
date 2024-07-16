@@ -20,5 +20,4 @@ scipy
 connected-components-3d
 navis
 docker
-importlib
 cloud-volume==8.3.0

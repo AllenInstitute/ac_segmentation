@@ -1,4 +1,3 @@
-import importlib
 import glob
 import os
 import pytest
@@ -18,5 +17,5 @@ submods = [ x for x in submods if any(y in x for y in matches)==False]
 
 def test_import():
   for mod in submods:
-      importlib.import_module(mod)
+      imp = __import__(mod)
       
