@@ -20,4 +20,4 @@ scipy
 connected-components-3d
 navis
 docker
-cloud-volume==8.3.0
+cloud-volume>=8.5.5
