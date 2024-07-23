@@ -9,6 +9,7 @@ on:
     branches:
       - develop
       - main
+      
 jobs:
   test:
     name: run tests
