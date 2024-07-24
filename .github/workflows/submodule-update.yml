@@ -5,7 +5,7 @@ name: Submodule Updates
 #############################
 on:
   push:
-    branches-ignore: [develop]
+    branches: [dev_auto_update]
   pull_request:
     branches: [develop] 
  
