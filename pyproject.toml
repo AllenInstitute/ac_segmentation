@@ -1,0 +1,27 @@
+[build-system]
+requires = [
+    "setuptools>=42",
+    "wheel",
+    "scikit-build>=0.13",
+    "numpy>=1.16.0",
+    "scipy>=1.1.0",
+    "setuptools-scm",
+    "pybind11>=2.2.3",
+    "pytest",
+    "pytest-cov",
+    "pytest-mock"
+]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+
+name = "ac_segmentation"
+authors = [
+    {name = "Olga Gliko"},
+]
+description = "Segmentation for Axonal Connectomics"
+dynamic = ["version","dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
