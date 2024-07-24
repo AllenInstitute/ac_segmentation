@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PARENT_REPOSITORY: 'AllenInstitute/ac_deploy'
-      CHECKOUT_BRANCH: 'master'
-      PR_AGAINST_BRANCH: 'master'
+      CHECKOUT_BRANCH: 'develop'
+      PR_AGAINST_BRANCH: 'develop'
       OWNER: 'AllenInstitute'
  
     steps:
