@@ -5,7 +5,7 @@ name: Submodule Updates
 #############################
 on:
   push:
-    branches: [auto-update]
+    branches: [master, main]
   pull_request:
     branches: [master, main]
  
@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PARENT_REPOSITORY: 'AllenInstitute/ac_deploy'
-      CHECKOUT_BRANCH: 'submod_update'
-      PR_AGAINST_BRANCH: 'submod_update'
+      CHECKOUT_BRANCH: 'master'
+      PR_AGAINST_BRANCH: 'master'
       OWNER: 'AllenInstitute'
  
     steps:
