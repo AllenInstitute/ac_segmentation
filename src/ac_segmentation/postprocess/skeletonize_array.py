@@ -185,10 +185,7 @@ def run(input_zarr, skeleton_output_path, probability_threshold=0.05,
                            else skeletonize_options)
                            
     # Load segmentation
-
     prob_map = open_tensor(input_zarr).read().result()
-    prob_map = prob_map[0:288,0:288,0:288]
-    print(prob_map.shape)
 
     # binarize volume, label, and skeletonize
     binary_arr = threshold_binarize_array(
