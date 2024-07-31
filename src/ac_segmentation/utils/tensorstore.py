@@ -71,7 +71,7 @@ def split_s3_path(s3_path):
 
 
 
-def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32', fill_value=-np.inf, 
+def create_tensor(fpath, arr_shape, driver='zarr3', store='file', dtype='float32', fill_value=-np.inf, 
                        chunk_shape=[64, 64, 64], res=[1,1,1], scale=0, arr=None, AWS_param=None):
     """Create a tensorstore object, with optional setting of array
        driver: Type of file, including zarr, n5, precomputed
@@ -96,7 +96,7 @@ def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32'
                                            "filename": AWS_param.credential_file['filename']}}
             kvstore.update(cred)
 
-    if driver in ['zarr','n5']:
+    if driver in ['zarr','zarr3','n5']:
         fill_value=None if driver=='n5' else fill_value
         out_arr = ts.open({
          'driver': driver,
@@ -132,7 +132,7 @@ def create_tensor(fpath, arr_shape, driver='zarr', store='file', dtype='float32'
 
     return out_arr
 
-def open_tensor(fpath, driver='zarr', store='file', AWS_param=None, bytes_limit= 100_000_000):
+def open_tensor(fpath, driver='zarr3', store='file', AWS_param=None, bytes_limit= 100_000_000):
     """Open a tensorstore object.
        driver: Type of file, including zarr, n5, precomputed
        store: Type of source, including file, s3
