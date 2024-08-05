@@ -5,7 +5,7 @@ def zarr_to_CATMAID_project(zarr_path, out_path, container_id, AWS_param, projec
 
     #convert zarr to precomputed
     zarr_to_precomputed(zarr_path=zarr_path, AWS_param=AWS_param, 
-                           out_path=out_path, store=store, chunks=(64,64,64), cutout=cutout)
+                           out_path=out_path, store=store, chunks=chunks, cutout=cutout)
     
     #extract url 
     bucket,path = split_s3_path(out_path)
