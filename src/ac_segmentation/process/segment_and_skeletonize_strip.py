@@ -28,18 +28,17 @@ import os
 if os.getenv("OMP_NUM_THREADS"):
     torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS")))
 
-
+        
 def run(weights_file, input_zarr, probability_output_path,
         skeleton_output_path, zarr_level=0, probability_threshold=0.05,
         label_size_threshold=80, filter_max_intensity=30000,
         predict_options=None, skeletonize_options=None):
-    predict_options = ({} if predict_options is None else predict_options)
-    skeletonize_options = ({} if skeletonize_options is None
-                           else skeletonize_options)
+        
     # predict and return as probability
     prob_map = predict_zarr_ts(
         input_zarr, weights_file, level=zarr_level,
-        max_intensity=filter_max_intensity, **predict_options)
+        max_intensity=filter_max_intensity, gpu_device=predict_options['gpu_device'], 
+        bound_box=predict_options['bound_box'])
 
     # write out uint8 representation of probabilities
     uint8_prob_map = (prob_map * 255).astype(numpy.uint8)
@@ -54,8 +53,7 @@ def run(weights_file, input_zarr, probability_output_path,
 
     # skels = skeletonize_labeled_array(labeled_arr, **skeletonize_options)
     skels = skeletonize_labeled_array_concurrent(
-        labeled_arr, **skeletonize_options
-    )
+        labeled_arr, n_jobs=skeletonize_options['n_jobs'])
 
     # write skeletons to swc zip
     # write_kimi_skels_tar(skeleton_output_path, skels)
@@ -63,9 +61,9 @@ def run(weights_file, input_zarr, probability_output_path,
 
 
 class SegmentationPredictOptions(argschema.schemas.DefaultSchema):
-    gpu_device = argschema.fields.Int(required=False, allow_none=True)
-    batch_size = argschema.fields.Int(required=False, allow_none=True)
-
+    gpu_device = argschema.fields.Int(required=False, allow_none=True, default=None)
+    batch_size = argschema.fields.Int(required=False, allow_none=True, default=80)
+    bound_box = argschema.fields.List(argschema.fields.Int(),required=False, default='', allow_none=True)
 
 class SkeletonizationOptions(argschema.schemas.DefaultSchema):
     n_jobs = argschema.fields.Int(required=False, allow_none=True)
@@ -103,11 +101,17 @@ class SegmentSkeletonizeZarrModule(argschema.ArgSchemaParser):
     
     @property
     def predict_options(self):
-        return self.args["predict_options"]
+        if self.args["predict_options"]==None:
+            return {'gpu_device':None,'bound_box':None}
+        else:
+            return self.args["predict_options"]
 
     @property
     def skeletonize_options(self):
-        return self.args["skeletonize_options"]    
+        if self.args["skeletonize_options"]==None:
+            return {'n_jobs':10}
+        else:
+            return self.args["skeletonize_options"] 
 
     def run(self):
         run(self.args["weights_file"], self.args["input_zarr"],
