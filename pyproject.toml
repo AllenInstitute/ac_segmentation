@@ -44,8 +44,10 @@ ac_segmentation = { path = ".", editable = true }
 # version-specific python features
 [tool.pixi.feature.py39.dependencies]
 python = "3.9.*"
+gcc = "*"
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
+gcc = "*"
 
 [tool.pixi.feature.scalene.dependencies]
 scalene = "*"

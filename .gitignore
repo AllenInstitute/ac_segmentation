@@ -104,4 +104,8 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# Pixi
+.pixi/
+pixi.lock
+
 **.vscode/
