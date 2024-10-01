@@ -81,10 +81,9 @@ class SegmentSkeletonizeZarrParameters(argschema.ArgSchema):
     filter_max_intensity = argschema.fields.Int(required=False, default=30000)
     label_size_threshold = argschema.fields.Int(required=False, default=80)
     predict_options = argschema.fields.Nested(
-        SegmentationPredictOptions, required=True)
+        SegmentationPredictOptions, required=False, default={'gpu_device':None, 'batch_size':80, 'bound_box':None})
     skeletonize_options = argschema.fields.Nested(
-        SkeletonizationOptions, required=True)
-
+        SkeletonizationOptions, required=True, default={'n_jobs':10})
     output_json = argschema.fields.OutputFile(required=False, allow_none=True)
 
 class SegmentSkeletonizeZarrModule(argschema.ArgSchemaParser):
