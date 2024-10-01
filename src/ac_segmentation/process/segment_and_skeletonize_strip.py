@@ -32,7 +32,7 @@ if os.getenv("OMP_NUM_THREADS"):
 def run(weights_file, input_zarr, probability_output_path,
         skeleton_output_path, zarr_level=0, probability_threshold=0.05,
         label_size_threshold=80, filter_max_intensity=30000,
-        predict_options=None, skeletonize_options=None):
+        predict_options={'gpu_device':None,'bound_box':None}, skeletonize_options={'n_jobs':10}):
 
     print(predict_options)
     # predict and return as probability
@@ -101,7 +101,6 @@ class SegmentSkeletonizeZarrModule(argschema.ArgSchemaParser):
                 
     @property
     def predict_options(self):
-        print(self.args["predict_options"])
         return self.args["predict_options"]
 
     @property
