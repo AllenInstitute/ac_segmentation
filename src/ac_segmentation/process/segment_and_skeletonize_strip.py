@@ -33,7 +33,8 @@ def run(weights_file, input_zarr, probability_output_path,
         skeleton_output_path, zarr_level=0, probability_threshold=0.05,
         label_size_threshold=80, filter_max_intensity=30000,
         predict_options=None, skeletonize_options=None):
-        
+
+    print(predict_options)
     # predict and return as probability
     prob_map = predict_zarr_ts(
         input_zarr, weights_file, level=zarr_level,
