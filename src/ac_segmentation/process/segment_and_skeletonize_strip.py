@@ -64,10 +64,10 @@ def run(weights_file, input_zarr, probability_output_path,
 class SegmentationPredictOptions(argschema.schemas.DefaultSchema):
     gpu_device = argschema.fields.String(required=True, allow_none=True, default=None)
     batch_size = argschema.fields.Int(required=True, allow_none=True, default=80)
-    bound_box = argschema.fields.List(argschema.fields.Int(),required=False, default='', allow_none=True)
+    bound_box = argschema.fields.List(argschema.fields.Int(),required=False, default=None, allow_none=True)
 
 class SkeletonizationOptions(argschema.schemas.DefaultSchema):
-    n_jobs = argschema.fields.Int(required=False, allow_none=True)
+    n_jobs = argschema.fields.Int(required=True, allow_none=True, default=10)
 
 class SegmentSkeletonizeZarrParameters(argschema.ArgSchema):
     input_zarr = argschema.fields.InputDir(required=True)
@@ -81,10 +81,9 @@ class SegmentSkeletonizeZarrParameters(argschema.ArgSchema):
     filter_max_intensity = argschema.fields.Int(required=False, default=30000)
     label_size_threshold = argschema.fields.Int(required=False, default=80)
     predict_options = argschema.fields.Nested(
-        SegmentationPredictOptions, required=False,
-        default=None, allow_none=True)
+        SegmentationPredictOptions, required=True)
     skeletonize_options = argschema.fields.Nested(
-        SkeletonizationOptions, required=False, default=None, allow_none=True)
+        SkeletonizationOptions, required=True)
 
     output_json = argschema.fields.OutputFile(required=False, allow_none=True)
 
