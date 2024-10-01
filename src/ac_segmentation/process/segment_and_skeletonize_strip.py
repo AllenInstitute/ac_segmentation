@@ -32,7 +32,7 @@ if os.getenv("OMP_NUM_THREADS"):
 def run(weights_file, input_zarr, probability_output_path,
         skeleton_output_path, zarr_level=0, probability_threshold=0.05,
         label_size_threshold=80, filter_max_intensity=30000,
-        predict_options={'gpu_device':None, 'bound_box':None, 'batch_size':80}, skeletonize_options=None):
+        predict_options=None, skeletonize_options=None):
 
     print(predict_options)
     # predict and return as probability
@@ -62,9 +62,9 @@ def run(weights_file, input_zarr, probability_output_path,
 
 
 class SegmentationPredictOptions(argschema.schemas.DefaultSchema):
-    gpu_device = argschema.fields.String(required=False, allow_none=True, default=None)
-    batch_size = argschema.fields.Int(required=False, allow_none=True, default=80)
-    bound_box = argschema.fields.String(required=False, allow_none=True, default=None)
+    gpu_device = argschema.fields.String(required=True, allow_none=True, default=None)
+    batch_size = argschema.fields.Int(required=True, allow_none=True, default=80)
+    bound_box = argschema.fields.List(argschema.fields.Int(),required=False, default='', allow_none=True)
 
 class SkeletonizationOptions(argschema.schemas.DefaultSchema):
     n_jobs = argschema.fields.Int(required=False, allow_none=True)
