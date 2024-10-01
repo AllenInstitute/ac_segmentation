@@ -101,11 +101,12 @@ class SegmentSkeletonizeZarrModule(argschema.ArgSchemaParser):
                 
     @property
     def predict_options(self):
-            return self.args["predict_options"]
+        print(self.args["predict_options"])
+        return self.args["predict_options"]
 
     @property
     def skeletonize_options(self):
-            return self.args["skeletonize_options"] 
+        return self.args["skeletonize_options"] 
 
     def run(self):
         run(self.args["weights_file"], self.args["input_zarr"],
