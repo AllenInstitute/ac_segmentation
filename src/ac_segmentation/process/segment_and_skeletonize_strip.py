@@ -61,7 +61,7 @@ def run(weights_file, input_zarr, probability_output_path,
 
 
 class SegmentationPredictOptions(argschema.schemas.DefaultSchema):
-    gpu_device = argschema.fields.Int(required=False, allow_none=True, default=None)
+    gpu_device = argschema.fields.String(required=False, allow_none=True, default=None)
     batch_size = argschema.fields.Int(required=False, allow_none=True, default=80)
     bound_box = argschema.fields.List(argschema.fields.Int(),required=False, default='', allow_none=True)
 
