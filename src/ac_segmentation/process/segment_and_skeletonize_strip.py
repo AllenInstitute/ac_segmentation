@@ -66,8 +66,7 @@ class SegmentationPredictOptions(argschema.schemas.DefaultSchema):
     bound_box = argschema.fields.List(argschema.fields.Int(),required=False, default='', allow_none=True)
 
 class SkeletonizationOptions(argschema.schemas.DefaultSchema):
-    n_jobs = argschema.fields.Int(required=False, allow_none=True)
-
+    n_jobs = argschema.fields.Int(required=False, allow_none=True, default=10)
 
 class SegmentSkeletonizeZarrParameters(argschema.ArgSchema):
     input_zarr = argschema.fields.InputDir(required=True)
@@ -82,9 +81,9 @@ class SegmentSkeletonizeZarrParameters(argschema.ArgSchema):
     label_size_threshold = argschema.fields.Int(required=False, default=80)
     predict_options = argschema.fields.Nested(
         SegmentationPredictOptions, required=False,
-        default=None, allow_none=True)
+        default={'gpu_device':None,'bound_box':None}, allow_none=True)
     skeletonize_options = argschema.fields.Nested(
-        SkeletonizationOptions, required=False, default=None, allow_none=True)
+        SkeletonizationOptions, required=False, default={'n_jobs':10}, allow_none=True)
 
     output_json = argschema.fields.OutputFile(required=False, allow_none=True)
 
@@ -98,19 +97,13 @@ class SegmentSkeletonizeZarrModule(argschema.ArgSchemaParser):
             pathlib.Path(out_json).parent.mkdir(parents=True, exist_ok=True)
             with open(out_json, "w") as f:
                 json.dump(f, d)
-    
+                
     @property
     def predict_options(self):
-        if self.args["predict_options"]==None:
-            return {'gpu_device':None,'bound_box':None}
-        else:
             return self.args["predict_options"]
 
     @property
     def skeletonize_options(self):
-        if self.args["skeletonize_options"]==None:
-            return {'n_jobs':10}
-        else:
             return self.args["skeletonize_options"] 
 
     def run(self):
