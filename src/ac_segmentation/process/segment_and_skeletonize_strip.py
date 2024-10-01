@@ -32,13 +32,13 @@ if os.getenv("OMP_NUM_THREADS"):
 def run(weights_file, input_zarr, probability_output_path,
         skeleton_output_path, zarr_level=0, probability_threshold=0.05,
         label_size_threshold=80, filter_max_intensity=30000,
-        predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}, skeletonize_options={'n_jobs':10):
+        predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}, skeletonize_options={'n_jobs':10}):
 
     print(predict_options)
     # predict and return as probability
     prob_map = predict_zarr_ts(
         input_zarr, weights_file, level=zarr_level,
-        max_intensity=filter_max_intensity, **predict_options)
+        max_intensity=filter_max_intensity, batch_size=predict_options['batch_size'], gpu_device=predict_options['gpu_device'], bound_box=predict_options['bound_box'])
 
     # write out uint8 representation of probabilities
     uint8_prob_map = (prob_map * 255).astype(numpy.uint8)
@@ -51,7 +51,7 @@ def run(weights_file, input_zarr, probability_output_path,
     labeled_arr, _ = label_binary_array(
         binary_arr, size_threshold=label_size_threshold)
 
-    # skels = skeletonize_labeled_array(labeled_arr, **skeletonize_options)
+    # skels = skeletonize_labeled_array(labeled_arr, n_jobs=skeletonize_options['n_jobs'])
     skels = skeletonize_labeled_array_concurrent(
         labeled_arr, **skeletonize_options
     )
