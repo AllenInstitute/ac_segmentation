@@ -109,7 +109,7 @@ def predict_zarr_ts(zarr_loc, weights_file, level=0,
         
 def run(weights_file, input_zarr, probability_output_path,
         zarr_level=0, filter_max_intensity=30000,
-        predict_options=None, skeletonize_options=None):
+        predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}):
         
     # predict and return as probability
     prob_map = predict_zarr_ts(
@@ -128,7 +128,6 @@ class PredictOptions(argschema.schemas.DefaultSchema):
     batch_size = argschema.fields.Int(required=True, allow_none=True, default=80)
     bound_box = argschema.fields.List(argschema.fields.Int(),required=False, default=None, allow_none=True)
 
-
 class SegmentZarrParameters(argschema.ArgSchema):
     input_zarr = argschema.fields.InputDir(required=True)
     weights_file = argschema.fields.InputFile(required=True)
@@ -137,7 +136,7 @@ class SegmentZarrParameters(argschema.ArgSchema):
     zarr_level = argschema.fields.Int(required=False, default=1)
     filter_max_intensity = argschema.fields.Int(required=False, default=30000)
     predict_options = argschema.fields.Nested(
-        SegmentationPredictOptions, required=True, default={'gpu_device':None, 'batch_size':80, 'bound_box':None})
+        PredictOptions, required=True, default={'gpu_device':None, 'batch_size':80, 'bound_box':None})
     output_json = argschema.fields.OutputFile(required=False, allow_none=True)
 
 
