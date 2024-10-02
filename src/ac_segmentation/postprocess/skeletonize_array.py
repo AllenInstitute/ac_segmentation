@@ -122,7 +122,7 @@ def join_components(skels, radius=2):
 
 def skeletonize_labeled_array_concurrent(
         labeled_array, chunk_size=[1000, 1000, 1000],
-        n_jobs=4, skel_search_radius=50, **kwargs):
+        n_jobs=4, skel_search_radius=50):
     def skel_chunk(start, end):
         skels = skeletonize_labeled_array(
             np.array(labeled_array[
@@ -160,21 +160,19 @@ def skeletonize_labeled_array_concurrent(
 
     #skeletonize
     if len(comb1) == 1:
-        res = skel_chunk(comb1[0], comb2[0])
+        res = [skel_chunk(comb1[0], comb2[0])]
     else:
         with joblib.parallel_config(backend="loky", inner_max_num_threads=1):
             res = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(skel_chunk)(x, y) for x, y in zip(comb1,comb2))
 
     #extract individual skeletons
     out_skels = []
-    if res==None:
-        pass
-    elif isinstance(res,cloudvolume.skeleton.Skeleton):
-        out_skels = res.components()
-    else:
-        res = [i for i in res if i is not None]
+    try:
         for sk in res:
+            if sk:
                 out_skels += sk.components()
+    except:
+        pass
 
     return out_skels
 
