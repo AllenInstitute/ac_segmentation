@@ -32,7 +32,7 @@ if os.getenv("OMP_NUM_THREADS"):
 def run(weights_file, input_zarr, probability_output_path,
         skeleton_output_path, zarr_level=0, probability_threshold=0.05,
         label_size_threshold=80, filter_max_intensity=30000,
-        predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}, skeletonize_options={'n_jobs':10}):
+        predict_options=None, skeletonize_options=None):
 
     print(predict_options)
     # predict and return as probability
@@ -81,9 +81,9 @@ class SegmentSkeletonizeZarrParameters(argschema.ArgSchema):
     filter_max_intensity = argschema.fields.Int(required=False, default=30000)
     label_size_threshold = argschema.fields.Int(required=False, default=80)
     predict_options = argschema.fields.Nested(
-        SegmentationPredictOptions, required=True, default={'gpu_device':None, 'batch_size':80, 'bound_box':None})
+        SegmentationPredictOptions, required=False, default={'gpu_device':None, 'batch_size':80, 'bound_box':None})
     skeletonize_options = argschema.fields.Nested(
-        SkeletonizationOptions, required=True, default={'n_jobs':10})
+        SkeletonizationOptions, required=False, default={'n_jobs':10})
     output_json = argschema.fields.OutputFile(required=False, allow_none=True)
 
 class SegmentSkeletonizeZarrModule(argschema.ArgSchemaParser):
