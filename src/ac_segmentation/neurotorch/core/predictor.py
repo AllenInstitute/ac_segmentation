@@ -111,7 +111,7 @@ class Predictor:
                 output_volume.blend(data)
 
     def toArray(self, data):
-        torch_data = data.getArray().astype(float)
+        torch_data = data.getArray()#.astype(float)
         torch_data = torch_data.reshape(1, 1, *torch_data.shape)
         return torch_data
 
@@ -124,7 +124,7 @@ class Predictor:
         return bounding_boxes, arrays
 
     def toData(self, tensor_list, bounding_boxes):
-        tensor = torch.cat(tensor_list).data.cpu().numpy()
+        tensor = torch.cat(tensor_list)#.data.cpu().numpy()
         batch = [Data(tensor[i][0], bounding_box)
                  for i, bounding_box in enumerate(bounding_boxes)]
 
