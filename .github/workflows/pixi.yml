@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [py39-conda-scalene, py310-conda-scalene]
+        environment: [py39-conda-scalene, py310-conda-scalene, py39-conda-test, py310-conda-test]
     steps:
     - uses: actions/checkout@v4
     - uses: prefix-dev/setup-pixi@v0.8.0
