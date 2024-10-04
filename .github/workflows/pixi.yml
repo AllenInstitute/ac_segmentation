@@ -10,6 +10,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [py39-conda-scalene, py310-conda-scalene]
     steps:
+    - uses: actions/checkout@v4
     - uses: prefix-dev/setup-pixi@v0.8.0
-    - run: pixi run test
+      with:
+        environments: ${{ matrix.environment }}
