@@ -152,10 +152,7 @@ class SegmentZarrModule(argschema.ArgSchemaParser):
     
     @property
     def predict_options(self):
-        if self.args["predict_options"]==None:
-            return {'gpu_device':None,'bound_box':None}
-        else:
-            return self.args["predict_options"]
+        return self.args["predict_options"]
 
     def run(self):
         run(self.args["weights_file"], self.args["input_zarr"],

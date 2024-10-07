@@ -34,7 +34,6 @@ def run(weights_file, input_zarr, probability_output_path,
         label_size_threshold=80, filter_max_intensity=30000,
         predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}, skeletonize_options={'n_jobs':10}):
 
-    print(predict_options)
     # predict and return as probability
     prob_map = predict_zarr_ts(
         input_zarr, weights_file, level=zarr_level,
