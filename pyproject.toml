@@ -34,6 +34,10 @@ test = [
     "codecov",
 ]
 
+[tool.flake8]
+ignore = ['E226', 'E126', 'E741']
+max-line-length = 79
+
 [tool.pixi.project]
 channels = ["conda-forge"]
 platforms = ["linux-64"]
@@ -66,5 +70,6 @@ test = "pytest  --cov --cov-report=xml --junitxml=test-reports/test.xml"
 
 [tool.pixi.feature.segment.tasks]
 segment = "python src/ac_segmentation/process/segment_array.py"
+pytest = "pytest"
 
 
