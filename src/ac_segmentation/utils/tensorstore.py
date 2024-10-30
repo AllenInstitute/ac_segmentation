@@ -11,53 +11,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing_extensions import Self
 
-class AWS_Parameters:
-    entries: dict[int, tuple[str, str]]
-    temp_dir: TemporaryDirectory[str]
-    credentials_file_path: Path
-
-    @classmethod
-    @lru_cache
-    def singleton(cls) -> "Self":
-        return cls()
-        
-    def __init__(self, profile=None, region=None, endpoint_url=None):
-        self.entries = {}
-        self.temp_dir = TemporaryDirectory()
-        self.credentials_file_path = Path(self.temp_dir.name) / "aws_credentials"
-        self.credentials_file_path.touch()
-
-        #create session
-        session = boto3.Session(profile_name=profile, region_name=region)
-        if endpoint_url:
-            session.endpoint_url=endpoint_url
-        self.profile=session.profile_name
-        self.region=session.region_name
-
-    def _dump_credentials(self) -> None:
-        self.credentials_file_path.write_text(
-            "\n".join(
-                [
-                    f"[{self.profile}]\naws_access_key_id = {access_key_id}\naws_secret_access_key = {secret_access_key}\n"
-                    for key_hash, (
-                        access_key_id,
-                        secret_access_key,
-                    ) in self.entries.items()
-                ]
-            )
-        )
-
-    def add_credentials(self, access_key_id: str, secret_access_key: str) -> dict[str, str]:
-        key_tuple = (access_key_id, secret_access_key)
-        key_hash = hash(key_tuple)
-        self.entries[key_hash] = key_tuple
-        self._dump_credentials()
-        self.credential_file = {
-            "profile": f"profile-{key_hash}",
-            "filename": str(self.credentials_file_path),
-            "metadata_endpoint": "",
-        }
-
 def split_s3_path(s3_path):
     if 'https' in s3_path:
         path_parts=s3_path.replace("https://","").split("/")
@@ -69,7 +22,121 @@ def split_s3_path(s3_path):
         key="/".join(path_parts)
     return bucket, key
 
+class AwsConfig:
+    def __init__(self, 
+                 aws_access_key_id: Optional[str] = None, 
+                 aws_secret_access_key: Optional[str] = None, 
+                 region_name: Optional[str] = None, 
+                 endpoint_url: Optional[str] = None, 
+                 profile: str = 'default'):
+        self.aws_access_key_id = aws_access_key_id
+        self.aws_secret_access_key = aws_secret_access_key
+        self.region_name = region_name
+        self.profile = profile
+        self.endpoint_url = endpoint_url
 
+    def __repr__(self):
+        return (f"AwsConfig(aws_access_key_id={self.aws_access_key_id}, "
+                f"aws_secret_access_key={self.aws_secret_access_key}, "
+                f"region_name={self.region_name}, "
+                f"endpoint_url={self.endpoint_url}, "
+                f"profile={self.profile})")
+
+def load_aws_config(profile: str = 'default', 
+                    endpoint_url: Optional[str] = None, 
+                    default_region: str = 'us-west-1') -> AwsConfig:
+    home = os.path.expanduser("~")
+    credentials_path = os.path.join(home, ".aws", "credentials")
+    config_path = os.path.join(home, ".aws", "config")
+
+    config = configparser.ConfigParser()
+    
+    # Load environment variables as fallback
+    aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
+    aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+    region_name = os.getenv('AWS_REGION')
+
+    # Load credentials
+    if os.path.exists(credentials_path):
+        config.read(credentials_path)
+        if profile in config:
+            aws_access_key_id = config.get(profile, "aws_access_key_id", fallback=aws_access_key_id)
+            aws_secret_access_key = config.get(profile, "aws_secret_access_key", fallback=aws_secret_access_key)
+
+    # Load config
+    if os.path.exists(config_path):
+        config.read(config_path)
+        if profile in config:
+            region_name = config.get(profile, "region", fallback=region_name)
+    
+    # Ensure region_name is set to default if not found
+    if region_name is None:
+        region_name = default_region
+
+    return AwsConfig(aws_access_key_id, aws_secret_access_key, region_name, endpoint_url, profile)
+
+def add_aws_profile(profile: str, 
+                    aws_access_key_id: str, 
+                    aws_secret_access_key: str) -> None:
+    home = os.path.expanduser("~")
+    credentials_path = os.path.join(home, ".aws", "credentials")
+    
+    config = configparser.ConfigParser()
+
+    # Read existing profiles
+    if os.path.exists(credentials_path):
+        config.read(credentials_path)
+
+    # Check if profile already exists
+    if profile in config:
+        raise ValueError(f"Profile '{profile}' already exists in {credentials_path}.")
+
+    # Add new profile
+    config[profile] = {
+        "aws_access_key_id": aws_access_key_id,
+        "aws_secret_access_key": aws_secret_access_key
+    }
+
+    # Write the updated config back to the file
+    with open(credentials_path, 'w') as configfile:
+        config.write(configfile)
+
+    print(f"Profile '{profile}' added successfully to {credentials_path}.")
+
+
+def open_tensor(fpath, driver='zarr3', store='file', AWS_param=None, bytes_limit= 100_000_000):
+    """Open a tensorstore object.
+       driver: Type of file, including zarr, n5, precomputed
+       store: Type of source, including file, s3
+       AWS_client: Only applicable to s3 store
+    """
+    kvstore = {"driver": store,"path": fpath}
+    if store == 's3':
+        bucket,path = split_s3_path(fpath)
+        kvstore = {"driver": "s3","bucket": bucket ,"path": path}
+        if AWS_param:
+            kvstore.update({"aws_region": AWS_param.region_name})
+            if AWS_param.endpoint_url:
+                kvstore.update({"endpoint": AWS_param.endpoint_url})
+            cred = {"aws_credentials":{"profile": AWS_param.profile}}
+            kvstore.update(cred)
+    #Load tensorstore array
+    dataset_future = ts.open({
+         'driver':
+             driver,
+         'kvstore': kvstore,
+     # Use 100MB in-memory cache.
+         'context': {
+             'cache_pool': {
+                 'total_bytes_limit': bytes_limit
+             }
+             \
+         },
+         'recheck_cached_data':
+         'open',
+     })
+
+    return dataset_future.result()
 
 def create_tensor(fpath, arr_shape, driver='zarr3', store='file', dtype='float32', fill_value=-np.inf, 
                        chunk_shape=[64, 64, 64], res=[1,1,1], scale=0, arr=None, AWS_param=None):
@@ -82,18 +149,16 @@ def create_tensor(fpath, arr_shape, driver='zarr3', store='file', dtype='float32
         fill_value=0
     if isinstance(arr, np.ndarray):
         arr = arr.astype(dtype)
+    
     kvstore = {"driver": store,"path": fpath}
     if store == 's3':
         bucket,path = split_s3_path(fpath)
         kvstore = {"driver": "s3","bucket": bucket ,"path": path}
         if AWS_param:
-            kvstore.update({"aws_region": AWS_param.region})
-            if hasattr(AWS_param, "endpoint_url"):
+            kvstore.update({"aws_region": AWS_param.region_name})
+            if AWS_param.endpoint_url:
                 kvstore.update({"endpoint": AWS_param.endpoint_url})
             cred = {"aws_credentials":{"profile": AWS_param.profile}}
-            if hasattr(AWS_param, "credential_file"):
-                cred = {"aws_credentials":{"profile": AWS_param.profile, 
-                                           "filename": AWS_param.credential_file['filename']}}
             kvstore.update(cred)
 
     if driver in ['zarr','zarr3','n5']:
@@ -131,43 +196,6 @@ def create_tensor(fpath, arr_shape, driver='zarr3', store='file', dtype='float32
         out_arr.write(arr).result()
 
     return out_arr
-
-def open_tensor(fpath, driver='zarr3', store='file', AWS_param=None, bytes_limit= 100_000_000):
-    """Open a tensorstore object.
-       driver: Type of file, including zarr, n5, precomputed
-       store: Type of source, including file, s3
-       AWS_client: Only applicable to s3 store
-    """
-    kvstore = {"driver": store,"path": fpath}
-    if store == 's3':
-        bucket,path = split_s3_path(fpath)
-        kvstore = {"driver": "s3","bucket": bucket ,"path": path}
-        if AWS_param:
-            kvstore.update({"aws_region": AWS_param.region})
-            if hasattr(AWS_param, "endpoint_url"):
-                kvstore.update({"endpoint": AWS_param.endpoint_url})
-            cred = {"aws_credentials":{"profile": AWS_param.profile}}
-            if hasattr(AWS_param, "credential_file"):
-                cred = {"aws_credentials":{"profile": AWS_param.profile, 
-                                           "filename": AWS_param.credential_file['filename']}}
-            kvstore.update(cred)
-    #Load tensorstore array
-    dataset_future = ts.open({
-         'driver':
-             driver,
-         'kvstore': kvstore,
-     # Use 100MB in-memory cache.
-         'context': {
-             'cache_pool': {
-                 'total_bytes_limit': bytes_limit
-             }
-             \
-         },
-         'recheck_cached_data':
-         'open',
-     })
-
-    return dataset_future.result()
 
 
 create_EmptyTensor = create_tensor  
