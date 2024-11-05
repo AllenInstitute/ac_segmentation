@@ -3,6 +3,8 @@ import gzip
 import io
 import tarfile
 import numpy
+import boto3
+from io import BytesIO
 
 
 
@@ -27,3 +29,20 @@ def write_cv_skels_iter_tar(tar_fn, skels):
             info = tarfile.TarInfo(name=f"{skid}.swc")
             info.size = len(bio.getbuffer())
             t.addfile(tarinfo=info, fileobj=bio)
+            
+            
+def upload_to_ceph(arr, out_file, bucket, profile, endpoint):
+
+    # Gzip the NumPy array and write it to the buffer
+    buffer = BytesIO()
+    with gzip.GzipFile(fileobj=buffer, mode='wb') as f:
+        numpy.save(f, arr)
+    # Reset buffer position to the beginning
+    buffer.seek(0)
+    
+    # Create a boto3 session using the specified profile
+    session = boto3.Session(profile_name=profile)
+    client = session.client('s3', endpoint_url=endpoint)
+
+    # Upload the gzipped data
+    client.put_object(Bucket=bucket, Key=out_file, Body=buffer)
