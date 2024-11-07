@@ -102,7 +102,7 @@ def create_kvstore(fpath, store, AWS_param=None):
     return kvstore
     
     
-def open_tensor(fpath, driver='zarr', kvstore=None, bytes_limit=100_000_000):
+def open_tensor(fpath=None, kvstore=None, driver='zarr', bytes_limit=100_000_000):
     """Open a tensorstore object.
 
     Args:
