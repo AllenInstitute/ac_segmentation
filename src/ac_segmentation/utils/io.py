@@ -31,18 +31,34 @@ def write_cv_skels_iter_tar(tar_fn, skels):
             t.addfile(tarinfo=info, fileobj=bio)
             
             
-def upload_to_ceph(arr, out_file, bucket, profile, endpoint):
+def upload_to_ceph(arr, out_file, bucket, profile=None, endpoint=None, aws_access_key=None, aws_secret_key=None):
+    try:
+        # Gzip the NumPy array and write it to the buffer
+        buffer = BytesIO()
+        with gzip.GzipFile(fileobj=buffer, mode='wb') as f:
+            np.save(f, arr)  # Save the array as .npy in gzip format
+        buffer.seek(0)
+        
+        # If AWS credentials are provided, use them
+        if aws_access_key and aws_secret_key:
+            session = boto3.Session(
+                aws_access_key_id=aws_access_key,
+                aws_secret_access_key=aws_secret_key,
+                region_name='us-east-1'  # Default region, you can modify this as needed
+            )
+        elif profile:
+            session = boto3.Session(profile_name=profile)
+        else:
+            # Default to environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+            session = boto3.Session()
 
-    # Gzip the NumPy array and write it to the buffer
-    buffer = BytesIO()
-    with gzip.GzipFile(fileobj=buffer, mode='wb') as f:
-        numpy.save(f, arr)
-    # Reset buffer position to the beginning
-    buffer.seek(0)
-    
-    # Create a boto3 session using the specified profile
-    session = boto3.Session(profile_name=profile)
-    client = session.client('s3', endpoint_url=endpoint)
+        # Create the S3 client with the session and endpoint
+        client = session.client('s3', endpoint_url=endpoint)
 
-    # Upload the gzipped data
-    client.put_object(Bucket=bucket, Key=out_file, Body=buffer)
+        # Upload the gzipped data to the Ceph bucket
+        response = client.put_object(Bucket=bucket, Key=out_file, Body=buffer)
+
+        # Optionally log or return the response from the upload
+        print(f"Upload successful")
+    except Exception as e:
+        print(f"An error occurred during upload: {e}")
