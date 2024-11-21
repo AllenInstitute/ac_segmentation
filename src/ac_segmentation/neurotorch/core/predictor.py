@@ -72,10 +72,12 @@ class Predictor:
                         keep.append(batch[ind])
 
                 if isinstance(input_volume, TSArray):
-                    self.run_batch(keep, output_volume, input_volume.shift, mini_batch_size=mini_batch_size)
+                    if keep:
+                        self.run_batch(keep, output_volume, input_volume.shift, mini_batch_size=mini_batch_size)
 
                 else:
-                    self.run_batch(keep, output_volume, mini_batch_size=mini_batch_size)
+                    if keep:
+                        self.run_batch(keep, output_volume, mini_batch_size=mini_batch_size)
 
     def getBatchSize(self):
         return self.batch_size
