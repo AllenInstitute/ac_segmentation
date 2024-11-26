@@ -16,7 +16,7 @@ from ac_segmentation.utils.io import (write_cv_skels_iter_tar)
 np = numpy
 
 
-def label_binary_array(binary_arr, size_threshold=200):
+def label_binary_array(binary_arr, size_threshold=20):
     
     labeled_arr, num_features = cc3d.connected_components(binary_arr, connectivity=6, return_N=True)
     if num_features > 1:
@@ -25,40 +25,39 @@ def label_binary_array(binary_arr, size_threshold=200):
         
     return labeled_arr, len(np.unique(labeled_arr))
 
-
-def threshold_binarize_array(arr, threshold=0.05):
-    # dumb method
+def threshold_binarize_array(arr, threshold=0.2):
     return (arr >= threshold)
 
-
-def skeletonize_labeled_array(
-        labeled_arr, scale=2, constant=5,
-        fill_holes=False, parallel=5,
-        dust_threshold=10, **kwargs):
-
+    
+def skeletonize_labeled_array(out_arr, probability_threshold=0.2, label_size_threshold=50, scale=2, constant=5, 
+                fill_holes=False, parallel=1, dust_threshold=10):
+    # binarize volume, label, and skeletonize
+    binary_arr = threshold_binarize_array(out_arr, threshold=probability_threshold)
+    labeled_arr, num_feat = label_binary_array(binary_arr, size_threshold=label_size_threshold)
     skels = kimimaro.skeletonize(
         labeled_arr,
         teasar_params={
             "scale": scale, 
-            "const": constant,  # influences the finger branches allowed
+            "const": constant, # influences the finger branches allowed
             "pdrf_scale": 10000,
             "pdrf_exponent": 1,
-            "soma_acceptance_threshold": 3500,  # physical units
-            "soma_detection_threshold": 750,  # physical units
-            "soma_invalidation_const": 300,  # physical units
+            "soma_acceptance_threshold": 3500, # physical units
+            "soma_detection_threshold": 750, # physical units
+            "soma_invalidation_const": 300, # physical units
             "soma_invalidation_scale": 2,
-            "max_paths": 50,  # default None
+            "max_paths": 50, # default None
         },
-        dust_threshold=dust_threshold,  # skip connected components with fewer than this many voxels
-        anisotropy=(1, 1, 1),  # default True #influences the dimension scale
-        fix_branching=True,  # default True
-        fix_borders=True,  # default True
-        fill_holes=fill_holes,  # default False
-        fix_avocados=False,  # default False
-        progress=False,  # default False, show progress bar
-        parallel=parallel,  # <= 0 all cpu, 1 single process, 2+ multiprocess
-        parallel_chunk_size=100,  # how many skeletons to process before updating progress bar
+        dust_threshold=dust_threshold, # skip connected components with fewer than this many voxels
+        anisotropy=(1,1,1), # default True #influences the dimension scale
+        fix_branching=True, # default True
+        fix_borders=True, # default True
+        fill_holes=fill_holes, # default False
+        fix_avocados=False, # default False
+        progress=False, # default False, show progress bar
+        parallel=parallel, # <= 0 all cpu, 1 single process, 2+ multiprocess
+        parallel_chunk_size=100, # how many skeletons to process before updating progress bar
     )
+
     return skels
 
 
@@ -121,14 +120,14 @@ def join_components(skels, radius=2):
 
 
 def skeletonize_labeled_array_concurrent(
-        labeled_array, chunk_size=[1000, 1000, 1000],
-        n_jobs=4, skel_search_radius=50):
+        array, chunk_size=[1000, 1000, 1000],
+        n_jobs=4,  probability_threshold=0.05, label_size_threshold=80):
     def skel_chunk(start, end):
         skels = skeletonize_labeled_array(
-            np.array(labeled_array[
+            out_arr=np.array(array[
                 start[0]:end[0],
                 start[1]:end[1],
-                start[2]:end[2]])
+                start[2]:end[2]]), probability_threshold=probability_threshold, label_size_threshold=label_size_threshold
         )
 
         if len(skels) != 0:
@@ -137,7 +136,7 @@ def skeletonize_labeled_array_concurrent(
             skels.vertices += start
             return skels
 
-    dx, dy, dz = labeled_array.shape
+    dx, dy, dz = array.shape
     xch, ych, zch = chunk_size
     sind_x, sind_y, sind_z = (
         list(range(0, dx, xch)),
@@ -175,34 +174,27 @@ def skeletonize_labeled_array_concurrent(
         pass
 
     return out_skels
+    
 
 
 def run(input_zarr, skeleton_output_path, probability_threshold=0.05,
-        label_size_threshold=80, skeletonize_options=None):
-    skeletonize_options = ({} if skeletonize_options is None
-                           else skeletonize_options)
+        label_size_threshold=80, n_jobs=10):
                            
     # Load segmentation
-    prob_map = open_tensor(input_zarr).read().result()
-
-    # binarize volume, label, and skeletonize
-    binary_arr = threshold_binarize_array(
-        prob_map, threshold=probability_threshold)
-    labeled_arr, _ = label_binary_array(
-        binary_arr, size_threshold=label_size_threshold)
+    try:
+        prob_map = open_tensor(input_zarr, driver='zarr')
+    except:
+        prob_map = open_tensor(input_zarr, driver='zarr3')
 
     # skels = skeletonize_labeled_array(labeled_arr, **skeletonize_options)
-    skels = skeletonize_labeled_array_concurrent(
-        labeled_arr, **skeletonize_options
+    skels = skeletonize_labeled_array_concurrent(prob_map,
+        probability_threshold=probability_threshold, 
+        label_size_threshold=label_size_threshold,
+        n_jobs=n_jobs
     )
 
     # write skeletons to swc zip
-    # write_kimi_skels_tar(skeleton_output_path, skels)
     write_cv_skels_iter_tar(skeleton_output_path, skels)
-
-
-class SkeletonizationOptions(argschema.schemas.DefaultSchema):
-    n_jobs = argschema.fields.Int(required=False, allow_none=True)
 
 
 class SkeletonizeZarrParameters(argschema.ArgSchema):
@@ -211,23 +203,18 @@ class SkeletonizeZarrParameters(argschema.ArgSchema):
     probability_threshold = argschema.fields.Float(
         required=False, default=0.05)
     label_size_threshold = argschema.fields.Int(required=False, default=80)
-    skeletonize_options = argschema.fields.Nested(
-        SkeletonizationOptions, required=False, default=None, allow_none=True)
+    n_jobs = argschema.fields.Int(required=False, default=10)
 
 
 class SkeletonizeZarrModule(argschema.ArgSchemaParser):
-    default_schema = SkeletonizeZarrParameters
-
-    @property
-    def skeletonize_options(self):
-        return self.args["skeletonize_options"]    
+    default_schema = SkeletonizeZarrParameters 
 
     def run(self):
         run(self.args["input_zarr"],
             self.args["skeleton_output"],
             self.args["probability_threshold"],
             self.args["label_size_threshold"],
-            self.skeletonize_options)
+            self.args["n_jobs"])
 
 
 if __name__ == "__main__":
@@ -237,3 +224,8 @@ if __name__ == "__main__":
 __all__ = [
     "SkeletonizeZarrModule",
     "SkeletonizeZarrParameters"]
+    
+    
+    
+    
+

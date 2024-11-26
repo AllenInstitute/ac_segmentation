@@ -515,9 +515,8 @@ class TSArray(Array):
         
         if self.prob_map == True:
             #data_array = torch.special.expit(torch.from_numpy(data_array)).numpy()
-            data_array = torch.special.expit(data_array).numpy()
-        else:
-            data_array = data_array.numpy()
+            data_array = torch.special.expit(data_array)
+        data_array = data_array.numpy()
             
         x,y,z = array.shape
         array = np.maximum(array, data_array[:x,:y,:z])
