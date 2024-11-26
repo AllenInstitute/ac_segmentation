@@ -5,7 +5,7 @@ import tarfile
 import numpy
 import boto3
 from io import BytesIO
-
+from ac_segmentation.utils.tensorstore import split_s3_path
 
 
 def gzip_array(fn, arr):
@@ -31,12 +31,12 @@ def write_cv_skels_iter_tar(tar_fn, skels):
             t.addfile(tarinfo=info, fileobj=bio)
             
             
-def upload_to_ceph(arr, out_file, bucket, profile=None, endpoint=None, aws_access_key=None, aws_secret_key=None):
+def upload_to_ceph(arr, out_file, profile=None, endpoint=None, aws_access_key=None, aws_secret_key=None, region='us-east-1'):
     try:
         # Gzip the NumPy array and write it to the buffer
         buffer = BytesIO()
         with gzip.GzipFile(fileobj=buffer, mode='wb') as f:
-            np.save(f, arr)  # Save the array as .npy in gzip format
+            numpy.save(f, arr)  # Save the array as .npy in gzip format
         buffer.seek(0)
         
         # If AWS credentials are provided, use them
@@ -44,7 +44,7 @@ def upload_to_ceph(arr, out_file, bucket, profile=None, endpoint=None, aws_acces
             session = boto3.Session(
                 aws_access_key_id=aws_access_key,
                 aws_secret_access_key=aws_secret_key,
-                region_name='us-east-1'  # Default region, you can modify this as needed
+                region_name=region  # Default region, you can modify this as needed
             )
         elif profile:
             session = boto3.Session(profile_name=profile)
@@ -54,9 +54,10 @@ def upload_to_ceph(arr, out_file, bucket, profile=None, endpoint=None, aws_acces
 
         # Create the S3 client with the session and endpoint
         client = session.client('s3', endpoint_url=endpoint)
-
+        
         # Upload the gzipped data to the Ceph bucket
-        response = client.put_object(Bucket=bucket, Key=out_file, Body=buffer)
+        bucket,key = split_s3_path(out_file)
+        response = client.put_object(Bucket=bucket, Key=key, Body=buffer)
 
         # Optionally log or return the response from the upload
         print(f"Upload successful")
