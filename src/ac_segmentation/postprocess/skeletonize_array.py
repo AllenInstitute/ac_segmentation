@@ -121,14 +121,13 @@ def join_components(skels, radius=2):
 
 def skeletonize_labeled_array_concurrent(
         array, chunk_size=[1000, 1000, 1000],
-        n_jobs=4,  probability_threshold=0.05, label_size_threshold=80):
+        n_jobs=4,  probability_threshold=0.05, label_size_threshold=80,  scale=2, constant=5):
     def skel_chunk(start, end):
         skels = skeletonize_labeled_array(
             out_arr=np.array(array[
                 start[0]:end[0],
                 start[1]:end[1],
-                start[2]:end[2]]), probability_threshold=probability_threshold, label_size_threshold=label_size_threshold
-        )
+                start[2]:end[2]]), probability_threshold=probability_threshold, label_size_threshold=label_size_threshold,  scale=scale, constant=constant)
 
         if len(skels) != 0:
             skels = [skel for skid, skel in skels.items()]
@@ -178,7 +177,7 @@ def skeletonize_labeled_array_concurrent(
 
 
 def run(input_zarr, skeleton_output_path, probability_threshold=0.05,
-        label_size_threshold=80, n_jobs=10):
+        label_size_threshold=80, n_jobs=10, scale=2, constant=5):
                            
     # Load segmentation
     try:
@@ -190,8 +189,7 @@ def run(input_zarr, skeleton_output_path, probability_threshold=0.05,
     skels = skeletonize_labeled_array_concurrent(prob_map,
         probability_threshold=probability_threshold, 
         label_size_threshold=label_size_threshold,
-        n_jobs=n_jobs
-    )
+        n_jobs=n_jobs, scale=scale, constant=constant)
 
     # write skeletons to swc zip
     write_cv_skels_iter_tar(skeleton_output_path, skels)

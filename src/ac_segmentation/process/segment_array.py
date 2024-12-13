@@ -77,7 +77,7 @@ def predict_zarr_ts(zarr_loc, weights_file, level=0,
                     max_intensity=30000, bytes_limit=(5 * ONE_GiB),
                     iter_size=BoundingBox(Vector(0, 0, 0), Vector(64, 64, 64)),
                     stride=Vector(32, 32, 32),
-                    batch_size=80, gpu_device=None, bound_box=None, AWS_param=None, out_fn=None): 
+                    batch_size=80, gpu_device=None, bound_box=None, AWS_param=None, out_fn=None, out_same=False): 
                     
     if 's3' in zarr_loc:          
         try:
@@ -95,7 +95,6 @@ def predict_zarr_ts(zarr_loc, weights_file, level=0,
             kvstore = create_kvstore(fpath=zarr_loc, store='file') 
             in_ts = open_ZarrTensor(zarr_loc, kvstore=kvstore)
     
-            
     in_ts = in_ts[0,0,...].transpose()
     if bound_box:
         x1,x2,y1,y2,z1,z2 = bound_box
@@ -111,8 +110,13 @@ def predict_zarr_ts(zarr_loc, weights_file, level=0,
             kvstore = create_kvstore(fpath=out_fn, store='s3', AWS_param=AWS_param)
         else:
             kvstore = create_kvstore(fpath=out_fn, store='file')
-        out_arr = create_tensor(arr_shape=in_ts.shape, kvstore=kvstore, driver='zarr3', dtype='float16', fill_value=-np.inf)
-        out_arr = TSArray(out_arr, iteration_size=iter_size, stride=stride, prob_map=True)
+            
+        try:
+            out_arr = open_ZarrTensor(kvstore=kvstore, driver='zarr3')
+        except:
+            out_arr = create_tensor(arr_shape=in_ts.shape, kvstore=kvstore, driver='zarr3', dtype='float16', fill_value=-np.inf)
+        
+        out_arr = TSArray(out_arr, iteration_size=iter_size, stride=stride, prob_map=True, out_same=out_same)
         predictor.run(
             in_arr, out_arr, batch_size=batch_size, max_pix=max_intensity)
     
@@ -133,13 +137,13 @@ def predict_zarr_ts(zarr_loc, weights_file, level=0,
     
 def run(weights_file, input_zarr, probability_output_path,
         zarr_level=0, filter_max_intensity=30000,
-        predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}, AWS_param=None):
+        predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}, AWS_param=None, out_same=False):
     
     # predict and return as probability
     prob_map = predict_zarr_ts(
         input_zarr, weights_file, level=zarr_level,
         max_intensity=filter_max_intensity, gpu_device=predict_options['gpu_device'], 
-        bound_box=predict_options['bound_box'], batch_size=predict_options['batch_size'], AWS_param=AWS_param, out_fn=probability_output_path)
+        bound_box=predict_options['bound_box'], batch_size=predict_options['batch_size'], AWS_param=AWS_param, out_fn=probability_output_path, out_same=out_same)
     
     if 'npy' in probability_output_path:    
         # write out uint8 representation of probabilities
@@ -152,7 +156,6 @@ def run(weights_file, input_zarr, probability_output_path,
                 AWS_key = file_contents[1].split('= ')[1][0:-1]
                 AWS_sec_key = file_contents[2].split('= ')[1][0:-1]
                 
-                print(probability_output_path,AWS_key, AWS_sec_key)
                 upload_to_ceph(arr=uint8_prob_map, out_file=probability_output_path, aws_access_key=AWS_key, aws_secret_key=AWS_sec_key, endpoint=AWS_param.endpoint_url)
             else:
                 upload_to_ceph(arr=uint8_prob_map, out_file=probability_output_path, profile=AWS_param.profile, endpoint=AWS_param.endpoint_url)
@@ -167,7 +170,7 @@ class CloudOptions(argschema.schemas.DefaultSchema):
     region = argschema.fields.String(required=False, default='us-east-1')
     endpoint = argschema.fields.String(required=False, default=None, allow_none=True)
     profile = argschema.fields.String(required=False, default=None, allow_none=True)
-
+     
 class PredictOptions(argschema.schemas.DefaultSchema):
     gpu_device = argschema.fields.String(required=False, allow_none=True, default=None)
     batch_size = argschema.fields.Int(required=False, allow_none=True, default=80)
@@ -176,14 +179,14 @@ class PredictOptions(argschema.schemas.DefaultSchema):
 class SegmentZarrParameters(argschema.ArgSchema):
     input_zarr = argschema.fields.String(required=True)
     weights_file = argschema.fields.InputFile(required=True)
-    probability_output = argschema.fields.String(required=True)         
+    probability_output = argschema.fields.String(required=True)      
 
-    zarr_level = argschema.fields.Int(required=False, default=1)
+    zarr_level = argschema.fields.Int(required=False, default=0)
     filter_max_intensity = argschema.fields.Int(required=False, default=30000)
     predict_options = argschema.fields.Nested(
         PredictOptions, required=False, default={'gpu_device':None, 'batch_size':80, 'bound_box':None})
     cloud_options = argschema.fields.Nested(
-        CloudOptions, required=False)
+        CloudOptions, required=False, default={})
     output_json = argschema.fields.OutputFile(required=False, allow_none=True)
     
 class SegmentZarrModule(argschema.ArgSchemaParser):
@@ -209,30 +212,30 @@ class SegmentZarrModule(argschema.ArgSchemaParser):
 
 
     def run(self):
-        try:
-            cloud = self.cloud_options
-            if cloud['profile']:
-                AWS_param = AWS_Parameters(profile=cloud['profile'], region=cloud['region'], endpoint_url=cloud['endpoint'])                    
+        AWS_param=None
+        cloud = self.cloud_options
+        if cloud['profile']:
+            AWS_param = AWS_Parameters(profile=cloud['profile'], region=cloud['region'], endpoint_url=cloud['endpoint'])                    
                             
-            if cloud['AWS_key']:
-                AWS_param = AWS_Parameters(region=cloud['region'], endpoint_url=cloud['endpoint'])
-                AWS_param.add_credentials(access_key_id=cloud['AWS_key'], secret_access_key=cloud['AWS_sec_key'])
-                                                                                                                             
+        if cloud['AWS_key']:
+            AWS_param = AWS_Parameters(region=cloud['region'], endpoint_url=cloud['endpoint'])
+            AWS_param.add_credentials(access_key_id=cloud['AWS_key'], secret_access_key=cloud['AWS_sec_key'])
+                                                              
+        if AWS_param:
             run(self.args["weights_file"], self.args["input_zarr"],
                         self.args["probability_output"],
                         self.args["zarr_level"],
                         self.args["filter_max_intensity"],
-                        self.predict_options, AWS_param)           
-                                                                    
-        except:
+                        self.predict_options, AWS_param, out_same=True)          
+                                                               
+        else:
             run(self.args["weights_file"], self.args["input_zarr"],
               self.args["probability_output"],
               self.args["zarr_level"],
               self.args["filter_max_intensity"],
-              self.predict_options)
+              self.predict_options, out_same=True)
 
         self.output(self.args)
-
 
 if __name__ == "__main__":
     mod = SegmentZarrModule()
