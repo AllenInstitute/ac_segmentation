@@ -345,7 +345,7 @@ class TSArray(Array):
     def __init__(self, tensor: ts.TensorStore, bounding_box: BoundingBox=None,
                  iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),
                                                          Vector(32, 32, 32)),
-                 stride: Vector=Vector(64, 64, 64), prob_map: bool=False):
+                 stride: Vector=Vector(64, 64, 64), prob_map: bool=False, out_same: bool=False):
         """
         Initializes a volume with a bounding box and iteration parameters
 
@@ -368,6 +368,7 @@ class TSArray(Array):
         self.setIteration(iteration_size=iteration_size,
                           stride=stride)
         self.prob_map = prob_map
+        self.out_same = out_same
         
     def set(self, data):
         """Allow dropping data off of improperly shaped arrays"""
@@ -505,9 +506,12 @@ class TSArray(Array):
 
         :param data: The data packet to blend into the volume
         """
-
-        v1 = data.bounding_box.edge1 - Vector(*shift[::-1])
-        v2 = data.bounding_box.edge2 - Vector(*shift[::-1])
+        if self.out_same:
+              v1 = data.bounding_box.edge1
+              v2 = data.bounding_box.edge2
+        else:
+            v1 = data.bounding_box.edge1 - Vector(*shift[::-1])
+            v2 = data.bounding_box.edge2 - Vector(*shift[::-1])
         data_bb = BoundingBox(v1,v2)
         
         array = self.get(data_bb).getArray().result()
@@ -515,9 +519,8 @@ class TSArray(Array):
         
         if self.prob_map == True:
             #data_array = torch.special.expit(torch.from_numpy(data_array)).numpy()
-            data_array = torch.special.expit(data_array).numpy()
-        else:
-            data_array = data_array.numpy()
+            data_array = torch.special.expit(data_array)
+        data_array = data_array.numpy()
             
         x,y,z = array.shape
         array = np.maximum(array, data_array[:x,:y,:z])
