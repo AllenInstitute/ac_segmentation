@@ -159,8 +159,9 @@ def skeletonize_labeled_array_concurrent(
         with joblib.parallel_config(backend='threading'):
             res = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(skel_chunk)(x, y, z) for x, y, z in zip(comb1,comb2, chunk_offsets))
     for chunk in res:
-        skels += chunk[0]
-        chunk[1].result()
+        if chunk:
+            skels += chunk[0]
+            chunk[1].result()
 
     if out_file and 'npy' in out_file.lower():
         with gzip.open(out_file, 'wb') as f:
