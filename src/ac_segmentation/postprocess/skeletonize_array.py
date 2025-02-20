@@ -1,5 +1,3 @@
-import itertools
-
 import joblib
 import numpy
 import scipy.spatial
@@ -10,19 +8,22 @@ import argschema
 import cloudvolume
 import kimimaro
 
-from ac_segmentation.utils.tensorstore import open_tensor
-from ac_segmentation.utils.io import (write_cv_skels_iter_tar)
+from ac_segmentation.utils.tensorstore import open_tensor, create_tensor, create_kvstore
+from ac_segmentation.utils.io import write_cv_skels_iter_tar, create_chunked_dims
+import fastremap
 
 np = numpy
 
-
-def label_binary_array(binary_arr, size_threshold=20):
+def label_binary_array(binary_arr, size_threshold=20, chunk_offset=0):
     
     labeled_arr, num_features = cc3d.connected_components(binary_arr, connectivity=6, return_N=True)
     if num_features > 1:
         labeled_arr = skimage.morphology.remove_small_objects(
             labeled_arr, min_size=size_threshold, connectivity=3, out=labeled_arr)
-        
+    if chunk_offset != 0:
+        imax = np.max(labeled_arr)+1
+        mappings = dict(zip(list(range(1,imax)), list(range(chunk_offset,chunk_offset+imax))))
+        labeled_arr = fastremap.remap(labeled_arr, mappings, preserve_missing_labels=True)
     return labeled_arr, len(np.unique(labeled_arr))
 
 def threshold_binarize_array(arr, threshold=0.2):
@@ -30,10 +31,10 @@ def threshold_binarize_array(arr, threshold=0.2):
 
     
 def skeletonize_labeled_array(out_arr, probability_threshold=0.2, label_size_threshold=50, scale=2, constant=5, 
-                fill_holes=False, parallel=1, dust_threshold=10):
+                fill_holes=False, parallel=1, dust_threshold=10, chunk_offset=0):
     # binarize volume, label, and skeletonize
     binary_arr = threshold_binarize_array(out_arr, threshold=probability_threshold)
-    labeled_arr, num_feat = label_binary_array(binary_arr, size_threshold=label_size_threshold)
+    labeled_arr, num_feat = label_binary_array(binary_arr, size_threshold=label_size_threshold, chunk_offset=chunk_offset)
     skels = kimimaro.skeletonize(
         labeled_arr,
         teasar_params={
@@ -57,8 +58,7 @@ def skeletonize_labeled_array(out_arr, probability_threshold=0.2, label_size_thr
         parallel=parallel, # <= 0 all cpu, 1 single process, 2+ multiprocess
         parallel_chunk_size=100, # how many skeletons to process before updating progress bar
     )
-
-    return skels
+    return skels, labeled_arr
 
 
 def join_components(skels, radius=2):
@@ -120,59 +120,56 @@ def join_components(skels, radius=2):
 
 
 def skeletonize_labeled_array_concurrent(
-        array, chunk_size=[1000, 1000, 1000],
-        n_jobs=4,  probability_threshold=0.05, label_size_threshold=80,  scale=2, constant=5):
-    def skel_chunk(start, end):
-        skels = skeletonize_labeled_array(
-            out_arr=np.array(array[
+        in_arr, chunk_size=[1000, 1000, 1000],
+        n_jobs=4,  probability_threshold=0.05, label_size_threshold=80,  scale=2, constant=5, out_file=None):
+    def skel_chunk(start, end, chunk_offset=0):
+        skels, labeled_arr = skeletonize_labeled_array(
+            out_arr=np.array(in_arr[
                 start[0]:end[0],
                 start[1]:end[1],
-                start[2]:end[2]]), probability_threshold=probability_threshold, label_size_threshold=label_size_threshold,  scale=scale, constant=constant)
-
+                start[2]:end[2]]), probability_threshold=probability_threshold, label_size_threshold=label_size_threshold,  
+            scale=scale, constant=constant, chunk_offset=chunk_offset)
         if len(skels) != 0:
-            skels = [skel for skid, skel in skels.items()]
-            skels = cloudvolume.Skeleton.simple_merge(skels).consolidate()
-            skels.vertices += start
-            return skels
+            for key in skels.keys():
+                skels[key].vertices += start
+            skels = list(skels.values())
+            write = out_arr[start[0]:end[0],start[1]:end[1],start[2]:end[2]].write(labeled_arr)
+            return [skels, write]
+        else:
+            return []
 
-    dx, dy, dz = array.shape
+    #create chunk offsets
     xch, ych, zch = chunk_size
-    sind_x, sind_y, sind_z = (
-        list(range(0, dx, xch)),
-        list(range(0, dy, ych)),
-        list(range(0, dz, zch))
-    )
-    eind_x, eind_y, eind_z = (
-        [x + xch for x in sind_x],
-        [x + ych for x in sind_y],
-        [x + zch for x in sind_z]
-    )
-    eind_x, eind_y, eind_z = (
-        [dx if ele > dx else ele for ele in eind_x],
-        [dy if ele > dy else ele for ele in eind_y],
-        [dz if ele > dz else ele for ele in eind_z]
-    )
-    comb1 = list(itertools.product(sind_x, sind_y, sind_z))
-    comb2 = list(itertools.product(eind_x, eind_y, eind_z))
-    del sind_x, sind_y, sind_z, eind_x, eind_y, eind_z
-
+    comb1,comb2 = create_chunked_dims(in_arr.shape, chunk_size=chunk_size)
+    chunk_offsets = []
+    for i in range(len(comb1)):
+        chunk_offsets.append(int((i*xch*ych*zch)/20))
+         
+    #create labelled array
+    if out_file and 'zarr' in out_file.lower():
+        out_arr = create_tensor(fpath=out_file, arr_shape=in_arr.shape, dtype = 'uint32', fill_value=-np.inf, driver='zarr3')
+    else:
+        out_arr = ts.array(np.zeros(in_arr.shape).astype('uint32'))
+    
     #skeletonize
+    skels = []
     if len(comb1) == 1:
         res = [skel_chunk(comb1[0], comb2[0])]
     else:
-        with joblib.parallel_config(backend="loky", inner_max_num_threads=1):
-            res = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(skel_chunk)(x, y) for x, y in zip(comb1,comb2))
+        with joblib.parallel_config(backend='threading'):
+            res = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(skel_chunk)(x, y, z) for x, y, z in zip(comb1,comb2, chunk_offsets))
+    for chunk in res:
+        if chunk:
+            skels += chunk[0]
+            chunk[1].result()
 
-    #extract individual skeletons
-    out_skels = []
-    try:
-        for sk in res:
-            if sk:
-                out_skels += sk.components()
-    except:
-        pass
-
-    return out_skels
+    if out_file and 'npy' in out_file.lower():
+        with gzip.open(out_file, 'wb') as f:
+            np.save(f, out_arr)
+    if not out_file:
+        out_arr = out_arr.read().result()
+        
+    return skels, out_arr
     
 
 
