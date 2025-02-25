@@ -7,7 +7,7 @@ from operator import add
 import itertools
 from collections import deque, defaultdict
 from scipy import ndimage as ndi
-from skimage.morphology import remove_small_objects, skeletonize_3d
+from skimage.morphology import remove_small_objects#, skeletonize_3d
 import tifffile as tif
 
 class PostprocessParameters(ags.ArgSchema):

@@ -37,7 +37,7 @@ def run(weights_file, input_zarr, probability_output_path,
     print(predict_options)
     # predict and return as probability
     prob_map = predict_zarr_ts(
-        input_zarr, weights_file, level=zarr_level,
+        input_zarr, probability_output_path, weights_file, level=zarr_level,
         max_intensity=filter_max_intensity, batch_size=predict_options['batch_size'], gpu_device=predict_options['gpu_device'], bound_box=predict_options['bound_box'])
 
     # write out uint8 representation of probabilities
@@ -52,7 +52,7 @@ def run(weights_file, input_zarr, probability_output_path,
         binary_arr, size_threshold=label_size_threshold)
 
     # skels = skeletonize_labeled_array(labeled_arr, n_jobs=skeletonize_options['n_jobs'])
-    skels = skeletonize_labeled_array_concurrent(
+    skels, edit_arr = skeletonize_labeled_array_concurrent(
         labeled_arr, **skeletonize_options
     )
 
