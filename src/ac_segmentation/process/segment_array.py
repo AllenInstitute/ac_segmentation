@@ -73,11 +73,11 @@ def predict_zarr(zarr_loc, weights_file, level=0,
     return numpy.transpose(prob_arr)
 
 
-def predict_zarr_ts(zarr_loc, weights_file, level=0,
+def predict_zarr_ts(zarr_loc, out_fn, weights_file, level=0,
                     max_intensity=30000, bytes_limit=(5 * ONE_GiB),
                     iter_size=BoundingBox(Vector(0, 0, 0), Vector(64, 64, 64)),
                     stride=Vector(32, 32, 32),
-                    batch_size=80, gpu_device=None, bound_box=None, AWS_param=None, out_fn=None, out_same=False): 
+                    batch_size=80, gpu_device=None, bound_box=None, AWS_param=None, out_same=False): 
                     
     if 's3' in zarr_loc:          
         try:
@@ -141,9 +141,9 @@ def run(weights_file, input_zarr, probability_output_path,
     
     # predict and return as probability
     prob_map = predict_zarr_ts(
-        input_zarr, weights_file, level=zarr_level,
+        input_zarr, probability_output_path, weights_file, level=zarr_level,
         max_intensity=filter_max_intensity, gpu_device=predict_options['gpu_device'], 
-        bound_box=predict_options['bound_box'], batch_size=predict_options['batch_size'], AWS_param=AWS_param, out_fn=probability_output_path, out_same=out_same)
+        bound_box=predict_options['bound_box'], batch_size=predict_options['batch_size'], AWS_param=AWS_param, out_same=out_same)
     
     if 'npy' in probability_output_path:    
         # write out uint8 representation of probabilities

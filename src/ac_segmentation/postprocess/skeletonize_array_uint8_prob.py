@@ -33,7 +33,7 @@ def run(probability_input_path, skeleton_output_path,
     labeled_arr, _ = label_binary_array(
         binary_arr, size_threshold=label_size_threshold)
 
-    skels = skeletonize_labeled_array_concurrent(
+    skels, edit_arr = skeletonize_labeled_array_concurrent(
         labeled_arr, **skeletonize_options
     )
 

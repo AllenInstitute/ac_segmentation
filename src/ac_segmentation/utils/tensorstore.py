@@ -117,7 +117,16 @@ def open_tensor(fpath=None, kvstore=None, driver='zarr', bytes_limit=100_000_000
     # If kvstore is not provided, create it from fpath
     if kvstore is None:
         kvstore = create_kvstore(fpath, store='file', AWS_param=None)
-    
+
+    # Check if zarr v3
+    if 'zarr' in driver:
+        full_path = os.path.abspath(fpath)
+        files_to_check = [full_path, os.path.dirname(full_path)]
+        for folder in files_to_check:
+            json_file = list(Path(folder).glob("*zarr.json"))
+            if json_file:
+                driver = 'zarr3'
+
     # Load the tensorstore array with cache configuration
     try:
         dataset_future = ts.open({

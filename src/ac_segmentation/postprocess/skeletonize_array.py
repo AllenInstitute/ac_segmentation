@@ -4,6 +4,7 @@ import scipy.spatial
 import skimage.morphology
 import cc3d
 import argschema
+import tensorstore as ts
 
 import cloudvolume
 import kimimaro
@@ -183,7 +184,7 @@ def run(input_zarr, skeleton_output_path, probability_threshold=0.05,
         prob_map = open_tensor(input_zarr, driver='zarr3')
 
     # skels = skeletonize_labeled_array(labeled_arr, **skeletonize_options)
-    skels = skeletonize_labeled_array_concurrent(prob_map,
+    skels,edit_arr = skeletonize_labeled_array_concurrent(prob_map,
         probability_threshold=probability_threshold, 
         label_size_threshold=label_size_threshold,
         n_jobs=n_jobs, scale=scale, constant=constant)
