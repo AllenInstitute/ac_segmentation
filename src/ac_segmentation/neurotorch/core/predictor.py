@@ -5,7 +5,6 @@ import joblib
 from joblib import Parallel, delayed
 from ac_segmentation.neurotorch.datasets.dataset import Data
 from ac_segmentation.utils.preprocess import lut_preprocess_array
-from skimage import exposure
 
 import ac_segmentation.neurotorch.datasets.dataset
 from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
@@ -61,13 +60,16 @@ class Predictor:
 
                     if hasattr(input_volume, 'rescale_perc'):
                         p1, p2 = np.percentile(batch[ind].array, input_volume.rescale_perc)
-                        batch[ind].array = exposure.rescale_intensity(batch[ind].array, in_range=(p1, p2))
+                        scale = 1.0 / (p2 - p1) if p2 > p1 else 1.0  
+                        batch[ind].array = (np.clip((batch[ind].array - p1) * scale, 0, 1).astype(str(batch[ind].array.dtype))*255).astype('int16')
+   
+                    else:
+                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
 
                     if hasattr(input_volume, 'mask'):
                         batch[ind].array = np.where(masks[ind].array, batch[ind].array, 0)
                         
                     if np.any(data.array) == True:
-                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
                         keep.append(batch[ind])
 
                 if isinstance(input_volume, TSArray):
