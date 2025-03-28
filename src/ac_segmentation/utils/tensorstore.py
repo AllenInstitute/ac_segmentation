@@ -120,29 +120,45 @@ def open_tensor(fpath=None, kvstore=None, driver='zarr', bytes_limit=100_000_000
 
     # Check if zarr v3
     if 'zarr' in driver:
-        full_path = os.path.abspath(fpath)
-        files_to_check = [full_path, os.path.dirname(full_path)]
-        for folder in files_to_check:
-            json_file = list(Path(folder).glob("*zarr.json"))
-            if json_file:
-                driver = 'zarr3'
-
-    # Load the tensorstore array with cache configuration
-    try:
-        dataset_future = ts.open({
-            'driver': driver,
-            'kvstore': kvstore,
-            'context': {
-                'cache_pool': {
-                    'total_bytes_limit': bytes_limit
-                }
-            },
-            'recheck_cached_data': 'open',
-        })
-        return dataset_future.result()
+        # Load the tensorstore array with cache configuration
+        try:
+            dataset_future = ts.open({
+                'driver': 'zarr',
+                'kvstore': kvstore,
+                'context': {
+                    'cache_pool': {
+                        'total_bytes_limit': bytes_limit
+                    }
+                },
+                'recheck_cached_data': 'open',
+            })
+            return dataset_future.result()
     
-    except Exception as e:
-        raise RuntimeError(f"Failed to open tensorstore dataset: {str(e)}")
+        except:
+            dataset_future = ts.open({
+                'driver': 'zarr3',
+                'kvstore': kvstore,
+                'context': {
+                    'cache_pool': {
+                        'total_bytes_limit': bytes_limit
+                    }
+                },
+                'recheck_cached_data': 'open',
+            })
+            return dataset_future.result()
+            
+    else:
+         dataset_future = ts.open({
+                'driver': driver,
+                'kvstore': kvstore,
+                'context': {
+                    'cache_pool': {
+                        'total_bytes_limit': bytes_limit
+                    }
+                },
+                'recheck_cached_data': 'open',
+            })
+         return dataset_future.result()
         
 
 def create_tensor(arr_shape, fpath=None, kvstore=None, driver='zarr3', dtype='float32', fill_value=-np.inf, 
