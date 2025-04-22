@@ -67,7 +67,7 @@ def predict_zarr(zarr_loc, weights_file, level=0,
     z = zarr.load(zarr_loc)
     ds = z[level]
     data = numpy.transpose(ds[0, 0, ...])
-    data = lut_preprocess_array(data, max_intensity)
+    data = lut_preprocess_array(data, max_int=max_intensity)
 
     prob_arr = predict_array(weights_file, data, **kwargs)
     return numpy.transpose(prob_arr)
