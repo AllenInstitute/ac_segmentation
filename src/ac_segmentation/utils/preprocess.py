@@ -11,7 +11,7 @@ def lut_preprocess_array(arr, max_int):
     
     
     
-def lut_preprocess_array(arr, min_int=None, max_int=None):
+def lut_preprocess_array_minmax(arr, min_int=None, max_int=None):
     dtype =  str(arr.dtype)
     arr_max = int(arr.max())
     if not max_int:

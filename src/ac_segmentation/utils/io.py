@@ -112,28 +112,44 @@ def upload_to_ceph(arr, out_file, profile=None, endpoint=None, aws_access_key=No
     except Exception as e:
         print(f"An error occurred during upload: {e}")
         
-def create_chunked_dims(arr_shape, chunk_size=(1000,1000,1000)):
-    #get indexing combinations
-    dx, dy, dz = arr_shape
-    xch, ych, zch = chunk_size
-    sind_x, sind_y, sind_z = (
-        list(range(0, dx, xch)),
-        list(range(0, dy, ych)),
-        list(range(0, dz, zch))
-    )
-    eind_x, eind_y, eind_z = (
-        [x + xch for x in sind_x],
-        [x + ych for x in sind_y],
-        [x + zch for x in sind_z]
-    )
-    eind_x, eind_y, eind_z = (
-        [dx if ele > dx else ele for ele in eind_x],
-        [dy if ele > dy else ele for ele in eind_y],
-        [dz if ele > dz else ele for ele in eind_z]
-    )
-    start = list(itertools.product(sind_x, sind_y, sind_z))
-    end = list(itertools.product(eind_x, eind_y, eind_z))
-    return start,end
+def create_chunked_dims(arr_shape, chunk_size):
+    # Ensure chunk_size is appropriate for the arr_shape length
+    if len(arr_shape) != len(chunk_size):
+        raise ValueError("arr_shape and chunk_size must have the same number of dimensions")
+
+    # Get indexing combinations
+    start_indices = []
+    end_indices = []
+
+    for dim_size, chunk in zip(arr_shape, chunk_size):
+        # Generate the start indices for each chunk
+        start_indices.append(list(range(0, dim_size, chunk)))
+        # Generate the end indices for each chunk, ensuring not to exceed the array size
+        end_indices.append([min(dim_size, start + chunk) for start in start_indices[-1]])
+
+    # Create all combinations of start and end indices across all dimensions
+    start = [list(item) for item in itertools.product(*start_indices)]
+    end = [list(item) for item in itertools.product(*end_indices)]
+
+    return start, end
+
+def create_overlap_chunks(start, end, overlap=32):
+    new_start = []
+    new_end = []
+    s = np.array(start[-3:])
+    e = np.array(end[-3:])
+    
+    new_start.append(list(s))
+    new_start.append(list(s+np.array([32,0,0])))
+    new_start.append(list(s+np.array([0,32,0])))
+    new_start.append(list(s+np.array([0,0,32])))
+
+    new_end.append(list(e))
+    new_end.append(list(e+np.array([32,0,0])))
+    new_end.append(list(e+np.array([0,32,0])))
+    new_end.append(list(e+np.array([0,0,32])))
+
+    return [new_start,new_end]
         
 
 def remap_arr(in_arr, mappings, chunk_size=[1000,1000,1000]):

@@ -64,7 +64,7 @@ class Predictor:
                         batch[ind].array = (np.clip((batch[ind].array - p1) * scale, 0, 1).astype(str(batch[ind].array.dtype))*255).astype('int16')
    
                     else:
-                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_int=max_pix)
+                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
 
                     if hasattr(input_volume, 'mask'):
                         batch[ind].array = np.where(masks[ind].array, batch[ind].array, 0)
