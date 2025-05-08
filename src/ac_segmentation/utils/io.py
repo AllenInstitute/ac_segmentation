@@ -136,19 +136,18 @@ def create_chunked_dims(arr_shape, chunk_size):
 def create_overlap_chunks(start, end, overlap=32):
     new_start = []
     new_end = []
-    s = np.array(start[-3:])
-    e = np.array(end[-3:])
-    
+    s = np.array(start)
+    e = np.array(end)
+
+    arrays = [np.array([overlap,0,0]),np.array([0,overlap,0]),np.array([0,0,overlap]),np.array([overlap,0,overlap]),
+              np.array([0,overlap,overlap]),np.array([overlap,overlap,0]), np.array([overlap,overlap,overlap])]
+
     new_start.append(list(s))
-    new_start.append(list(s+np.array([32,0,0])))
-    new_start.append(list(s+np.array([0,32,0])))
-    new_start.append(list(s+np.array([0,0,32])))
-
     new_end.append(list(e))
-    new_end.append(list(e+np.array([32,0,0])))
-    new_end.append(list(e+np.array([0,32,0])))
-    new_end.append(list(e+np.array([0,0,32])))
-
+    for arr in arrays:
+        new_start.append(list(s+arr))
+        new_end.append(list(e+arr))
+        
     return [new_start,new_end]
         
 

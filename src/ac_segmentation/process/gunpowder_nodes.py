@@ -57,13 +57,13 @@ def make_mask(shape, depth=1):
         x = np.linspace(0, x1 - 2, x2).astype(int)
         y = np.linspace(0, y1 - 2, y2).astype(int)
         z = np.linspace(0, z1 - 2, z2).astype(int)
-        out = out[np.ix_(x, y, z)]
+        out = ((out[np.ix_(x, y, z)]))
 
     return out
 
 def perimeter_weighted_blend(array1, array2, depth=.5):
     weight_map = make_mask(array1.shape, depth)
-    return (array1 * (1 - weight_map) + array2 * (weight_map)).astype('uint8')
+    return (array1 * (1 - weight_map) + array2 * (weight_map))
     
     
 
@@ -340,22 +340,22 @@ class ContrastAdjustWrite(gp.BatchFilter):
         p1, p2 = np.percentile(input_data, self.int_range)
         
         if np.any(input_data) == True:
-            if len(input_arr.shape) ==5:
+            if len(self.in_array.shape) ==5:
                 input_data = input_data[0,0,:,:,:]
             scale = 1.0 / (p2 - p1) if p2 > p1 else 1.0
             output_data = np.clip((input_data - p1) * scale, 0, 1)
             output_data = (output_data * 255)
 
-            if len(input_arr.shape) ==5:
+            if len(self.in_array.shape) ==5:
                 arr2 = self.out_array[0,0,x1:x2, y1:y2, z1:z2].read().result()
-                if (output_data.shape[-3:] == (output_data.shape[2],) * len(output_data.shape[-3:])) == True:
-                    output_data = perimeter_weighted_blend(arr2, output_data, depth=.9)
-                    write_obj = self.out_array[:,:,x1:x2, y1:y2, z1:z2].write(output_data[None, None, :] )
+                if (output_data.shape[-3:] == (output_data.shape[2],) * len(output_data.shape[-3:])) == True: ###can i remove this???
+                    output_data = perimeter_weighted_blend(arr2, output_data, depth=.9).astype('uint8')
+                    write_obj = self.out_array[:,:,x1:x2, y1:y2, z1:z2].write(output_data[None, None, :])
                 self.write_objects.append(write_obj)
             else:
                 arr2 = self.out_array[x1:x2, y1:y2, z1:z2].read().result()
                 if (output_data.shape == (output_data.shape[0],) * len(output_data.shape)) == True:
-                    output_data = perimeter_weighted_blend(arr2, output_data, depth=.9)
+                    output_data = perimeter_weighted_blend(arr2, output_data, depth=.9).astype('uint8')
                     write_obj = self.out_array[x1:x2, y1:y2, z1:z2].write(output_data)
                 self.write_objects.append(write_obj)
 
@@ -363,6 +363,6 @@ class ContrastAdjustWrite(gp.BatchFilter):
         return self.write_objects
 
     def clear_write_objects(self):
-        del self.write_objects
+        self.write_objects = []
         
 
