@@ -11,7 +11,7 @@ import torch
 RSUNet = ac_segmentation.neurotorch.nets.RSUNet.RSUNet
 
 
-def segment_gunpowder(input_path, output_path, checkpoint, iter_size=(64,64,64), stride=(32,32,32), batch_size=5, cutout=None, gpu_device=None, cpus=20, preprocess={'method':'percentile','values':[96,97]}):
+def segment_gunpowder(input_path, output_path, checkpoint, iter_size=(64,64,64), batch_size=3, cutout=None, gpu_device=None, cpus=20, preprocess={'method':'percentile','values':[96,97]}):
     
     if int(cpus) > int(os.cpu_count()):
         cpus = os.cpu_count()
@@ -32,7 +32,6 @@ def segment_gunpowder(input_path, output_path, checkpoint, iter_size=(64,64,64),
     start_req = (0,0,0)
     if len(input_arr.shape) == 5:
         iter_size = (1,1,) + iter_size
-        stride = (0,0,) + stride
         start_req = (0,0,0,0,0)
     chunk_size = batch_size*np.array(iter_size)
     
@@ -79,8 +78,20 @@ def segment_gunpowder(input_path, output_path, checkpoint, iter_size=(64,64,64),
     #create chunks
     start, end = create_chunked_dims(arr_shape=input_arr.shape, chunk_size=chunk_size)
     start_new, end_new = [], []
+
+    if cutout:
+        x1, x2, y1, y2, z1, z2 = cutout
+        for i, (s, e) in enumerate(zip(start, end)):
+            offset = np.array([x1,y1,z1])
+            s, e = np.array(s[-3:])+offset, np.array(e[-3:])+offset
+            if (e[0] <= x2+chunk_size[-3] and e[1] <= y2+chunk_size[-2] and e[2] <= z2+chunk_size[-1]):
+                start_new.append(s)
+                end_new.append(e)
+        start, end = start_new, end_new
+        start_new, end_new = [], []
+        
     for i in range(len(start)):
-        sover, eover = create_overlap_chunks(start[i][-3:], end[i][-3:], overlap=32)
+        sover, eover = create_overlap_chunks(start[i][-3:], end[i][-3:], overlap=int(iter_size[-1]/2))
         start_new += sover
         end_new += eover
     
@@ -94,21 +105,6 @@ def segment_gunpowder(input_path, output_path, checkpoint, iter_size=(64,64,64),
             start_new[i] = list(np.minimum(arr1, save))
         else:
             save = arr1
-                      
-    if cutout:
-        x1, x2, y1, y2, z1, z2 = cutout
-        start = []
-        end = []
-        for i, (s, e) in enumerate(zip(start_new, end_new)):
-            s, e = s[-3:], e[-3:]
-            if (s[0] >= x1 and s[1] >= y1 and s[2] >= z1
-                and e[0] <= x2 and e[1] <= y2 and e[2] <= z2):
-                start.append(start_new[i])
-                end.append(end_new[i])
-                
-    else:
-        start = start_new
-        end = end_new
 
     #run pipeline    
     with gp.build(pipeline):
@@ -127,12 +123,11 @@ def segment_gunpowder(input_path, output_path, checkpoint, iter_size=(64,64,64),
             # Request the batch
             batch = pipeline.request_batch(request)
     
-            # Retrieve the list of write objects and write them
-            write_objects = apply_model.get_write_objects()
-            for write in write_objects:
-                write.result()
-            apply_model.clear_write_objects()
-    
+    # Retrieve the list of write objects and write them
+    write_objects = apply_model.get_write_objects()
+    for write in write_objects:
+        write.result()
+    apply_model.clear_write_objects()
     etime = datetime.now()
     print(etime-stime)
     
