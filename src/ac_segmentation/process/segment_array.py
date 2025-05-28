@@ -94,8 +94,10 @@ def predict_zarr_ts(zarr_loc, out_fn, weights_file, level=0,
         except:
             kvstore = create_kvstore(fpath=zarr_loc, store='file') 
             in_ts = open_ZarrTensor(zarr_loc, kvstore=kvstore)
+
+    if len(in_ts.shape) == 5:
+        in_ts = in_ts[0,0,...]
     
-    in_ts = in_ts[0,0,...].transpose()
     if bound_box:
         x1,x2,y1,y2,z1,z2 = bound_box
         in_ts = in_ts[z1:z2,y1:y2,x1:x2]
