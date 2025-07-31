@@ -1,7 +1,7 @@
 numpy==1.26.0
 scikit-build>=0.13
 cloud-files
-torch
+torch==2.2.0
 tifffile==2023.1.23.1
 h5py>=2.7.1
 psutil>=5.4.7
