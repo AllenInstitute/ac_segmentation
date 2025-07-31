@@ -3,7 +3,7 @@ requires = [
     "setuptools>=42",
     "wheel",
     "scikit-build>=0.13",
-    "numpy",
+    "numpy>=1.26.0",
     "scipy>=1.1.0",
     "setuptools-scm",
     "pybind11>=2.2.3",
@@ -49,14 +49,18 @@ ac_segmentation = { path = ".", editable = true }
 [tool.pixi.feature.py39.dependencies]
 python = "3.9.*"
 gcc = "*"
+numpy = "==1.26.0"
+
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
 gcc = "*"
+numpy = "==1.26.0"
 
 [tool.pixi.feature.scalene.dependencies]
 scalene = "*"
 
 [tool.pixi.environments]
+default = ["py310"] 
 py39-conda-scalene = ["scalene", "py39","segment"]
 py310-conda-scalene = ["scalene", "py310", "segment"]
 py39-conda-test = ["py39","test"]
