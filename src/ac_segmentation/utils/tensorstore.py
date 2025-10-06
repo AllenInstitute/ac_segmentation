@@ -159,15 +159,11 @@ def open_tensor(fpath=None, kvstore=None, driver='zarr', bytes_limit=100_000_000
                 'recheck_cached_data': 'open',
             })
          return dataset_future.result()
-        
 
-####Codec examples
-##zarr --  {"id": "blosc","shuffle": -1,"clevel": 2,"cname": "lz4"}
-##zarr3 -- {"name": "blosc", "configuration": {"cname": "lz4", "clevel": 5}}
-          #{"name": "bytes", "configuration": {"endian": "little"}},
-          #{"name": "gzip", "configuration": {"level": 5}
+
+
 def create_tensor(arr_shape, fpath=None, kvstore=None, driver='zarr3', dtype='float32', fill_value=0, 
-                       chunk_shape=[64, 64, 64], shard_shape=None, res=[1,1,1], scale=0, codecs=None, index_codecs=None, sharded=False):
+                       chunk_shape=[64, 64, 64], shard_shape=None, res=[1,1,1], scale=0, codecs=None, index_codecs=None, sharded=False, shard_factor=4):
     """Create a tensorstore object, with optional setting of array
        driver: Type of file, including zarr, n5, precomputed
        store: Type of source, including file, in-memory, s3
@@ -217,7 +213,7 @@ def create_tensor(arr_shape, fpath=None, kvstore=None, driver='zarr3', dtype='fl
 
         if sharded == True:
             if not shard_shape:
-                shard_shape = list(np.array(chunk_shape[:-3] + [x * 4 for x in chunk_shape[-3:]]))
+                shard_shape = list(np.array(chunk_shape[:-3] + [x * (shard_factor) for x in chunk_shape[-3:]]))
             meta['metadata']['chunk_grid']['configuration']['chunk_shape']=shard_shape
             shard_meta = {
                     "name": "sharding_indexed",

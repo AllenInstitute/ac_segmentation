@@ -14,7 +14,6 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-
 name = "ac_segmentation"
 version = "0.0.2"
 authors = [
@@ -75,5 +74,7 @@ test = "pytest  --cov --cov-report=xml --junitxml=test-reports/test.xml"
 [tool.pixi.feature.segment.tasks]
 segment = "python src/ac_segmentation/process/segment_array.py"
 pytest = "pytest"
+
+
 
 

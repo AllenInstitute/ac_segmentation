@@ -31,14 +31,14 @@ if os.getenv("OMP_NUM_THREADS"):
 
 def run(weights_file, input_zarr, probability_output_path,
         skeleton_output_path, zarr_level=0, probability_threshold=0.05,
-        label_size_threshold=80, filter_max_intensity=30000,
+        label_size_threshold=80, filter_max_intensity=30000, rescale_perc=None,
         predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}, skeletonize_options={'n_jobs':10}):
 
     print(predict_options)
     # predict and return as probability
     prob_map = predict_zarr_ts(
-        input_zarr, probability_output_path, weights_file, level=zarr_level,
-        max_intensity=filter_max_intensity, batch_size=predict_options['batch_size'], gpu_device=predict_options['gpu_device'], bound_box=predict_options['bound_box'])
+        input_zarr, weights_file, level=zarr_level,
+        max_intensity=filter_max_intensity, rescale_perc=rescale_perc, batch_size=predict_options['batch_size'], gpu_device=predict_options['gpu_device'], bound_box=predict_options['bound_box'])
 
     # write out uint8 representation of probabilities
     uint8_prob_map = (prob_map * 255).astype(numpy.uint8)
@@ -52,7 +52,7 @@ def run(weights_file, input_zarr, probability_output_path,
         binary_arr, size_threshold=label_size_threshold)
 
     # skels = skeletonize_labeled_array(labeled_arr, n_jobs=skeletonize_options['n_jobs'])
-    skels, edit_arr = skeletonize_labeled_array_concurrent(
+    skels = skeletonize_labeled_array_concurrent(
         labeled_arr, **skeletonize_options
     )
 
@@ -79,6 +79,7 @@ class SegmentSkeletonizeZarrParameters(argschema.ArgSchema):
     probability_threshold = argschema.fields.Float(
         required=False, default=0.05)
     filter_max_intensity = argschema.fields.Int(required=False, default=30000)
+    rescale_perc = argschema.fields.String(allow_none=True, default=None)
     label_size_threshold = argschema.fields.Int(required=False, default=80)
     predict_options = argschema.fields.Nested(
         SegmentationPredictOptions, required=False, default={'gpu_device':None, 'batch_size':80, 'bound_box':None})
@@ -111,6 +112,7 @@ class SegmentSkeletonizeZarrModule(argschema.ArgSchemaParser):
             self.args["probability_threshold"],
             self.args["label_size_threshold"],
             self.args["filter_max_intensity"],
+            self.args["rescale_perc"],
             self.predict_options,
             self.skeletonize_options)
         self.output(self.args)

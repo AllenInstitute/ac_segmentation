@@ -2,6 +2,7 @@ import numpy
 import torch
 import argschema
 from pathlib import Path
+import ast
 
 try:
     import zarr
@@ -73,11 +74,11 @@ def predict_zarr(zarr_loc, weights_file, level=0,
     return numpy.transpose(prob_arr)
 
 
-def predict_zarr_ts(zarr_loc, out_fn, weights_file, level=0,
-                    max_intensity=30000, bytes_limit=(5 * ONE_GiB),
+def predict_zarr_ts(zarr_loc, weights_file, level=0,
+                    max_intensity=30000, rescale_perc=None, bytes_limit=(5 * ONE_GiB),
                     iter_size=BoundingBox(Vector(0, 0, 0), Vector(64, 64, 64)),
                     stride=Vector(32, 32, 32),
-                    batch_size=80, gpu_device=None, bound_box=None, AWS_param=None, out_same=False): 
+                    batch_size=80, gpu_device=None, bound_box=None, AWS_param=None, out_fn=None, out_same=False): 
                     
     if 's3' in zarr_loc:          
         try:
@@ -94,20 +95,25 @@ def predict_zarr_ts(zarr_loc, out_fn, weights_file, level=0,
         except:
             kvstore = create_kvstore(fpath=zarr_loc, store='file') 
             in_ts = open_ZarrTensor(zarr_loc, kvstore=kvstore)
-
-    if len(in_ts.shape) == 5:
-        in_ts = in_ts[0,0,...]
+    
     
     if bound_box:
         x1,x2,y1,y2,z1,z2 = bound_box
-        in_ts = in_ts[z1:z2,y1:y2,x1:x2]
+        if len(in_ts.shape) == 5:
+            in_ts = in_ts[0,0,x1:x2,y1:y2,z1:z2]
+        else: 
+            in_ts = in_ts[x1:x2,y1:y2,z1:z2]
                     
     in_arr = TSArray(in_ts, iteration_size=iter_size, stride=stride)
+    
+    if rescale_perc:
+      in_arr.set_Rescale_Perc(rescale_perc)
+    
     net = ac_segmentation.neurotorch.nets.RSUNet.RSUNet()
     predictor = Predictor(net, weights_file, gpu_device=gpu_device)
     
     
-    if 'zarr' in out_fn:
+    if out_fn and 'zarr' in out_fn:
         if 's3' in out_fn:
             kvstore = create_kvstore(fpath=out_fn, store='s3', AWS_param=AWS_param)
         else:
@@ -138,14 +144,14 @@ def predict_zarr_ts(zarr_loc, out_fn, weights_file, level=0,
     
     
 def run(weights_file, input_zarr, probability_output_path,
-        zarr_level=0, filter_max_intensity=30000,
+        zarr_level=0, filter_max_intensity=30000, rescale_perc=None,
         predict_options={'gpu_device':None, 'batch_size':80, 'bound_box':None}, AWS_param=None, out_same=False):
     
     # predict and return as probability
     prob_map = predict_zarr_ts(
-        input_zarr, probability_output_path, weights_file, level=zarr_level,
-        max_intensity=filter_max_intensity, gpu_device=predict_options['gpu_device'], 
-        bound_box=predict_options['bound_box'], batch_size=predict_options['batch_size'], AWS_param=AWS_param, out_same=out_same)
+        input_zarr, weights_file, level=zarr_level,
+        max_intensity=filter_max_intensity, rescale_perc=rescale_perc, gpu_device=predict_options['gpu_device'], 
+        bound_box=predict_options['bound_box'], batch_size=predict_options['batch_size'], AWS_param=AWS_param, out_fn=probability_output_path, out_same=out_same)
     
     if 'npy' in probability_output_path:    
         # write out uint8 representation of probabilities
@@ -185,6 +191,7 @@ class SegmentZarrParameters(argschema.ArgSchema):
 
     zarr_level = argschema.fields.Int(required=False, default=0)
     filter_max_intensity = argschema.fields.Int(required=False, default=30000)
+    rescale_perc = argschema.fields.String(allow_none=True, default=None)
     predict_options = argschema.fields.Nested(
         PredictOptions, required=False, default={'gpu_device':None, 'batch_size':80, 'bound_box':None})
     cloud_options = argschema.fields.Nested(
@@ -206,6 +213,9 @@ class SegmentZarrModule(argschema.ArgSchemaParser):
         if self.args["predict_options"]==None:
             return {'gpu_device':None,'bound_box':None}
         else:
+            for key, value in self.args["predict_options"].items():
+                if value == "None":
+                    self.args["predict_options"][key] = None
             return self.args["predict_options"]
             
     @property
@@ -216,6 +226,18 @@ class SegmentZarrModule(argschema.ArgSchemaParser):
     def run(self):
         AWS_param=None
         cloud = self.cloud_options
+        
+         
+        for key, value in self.args.items():
+            if value == "None":
+                self.args[key] = None
+                
+        try:                
+            self.args['rescale_perc'] = ast.literal_eval(self.args['rescale_perc'])
+        except:
+            pass                                     
+            
+        
         if cloud['profile']:
             AWS_param = AWS_Parameters(profile=cloud['profile'], region=cloud['region'], endpoint_url=cloud['endpoint'])                    
                             
@@ -227,7 +249,8 @@ class SegmentZarrModule(argschema.ArgSchemaParser):
             run(self.args["weights_file"], self.args["input_zarr"],
                         self.args["probability_output"],
                         self.args["zarr_level"],
-                        self.args["filter_max_intensity"],
+                        self.args["filter_max_intensity"], 
+                        self.args["rescale_perc"],
                         self.predict_options, AWS_param, out_same=True)          
                                                                
         else:
@@ -235,6 +258,7 @@ class SegmentZarrModule(argschema.ArgSchemaParser):
               self.args["probability_output"],
               self.args["zarr_level"],
               self.args["filter_max_intensity"],
+              self.args["rescale_perc"],
               self.predict_options, out_same=True)
 
         self.output(self.args)

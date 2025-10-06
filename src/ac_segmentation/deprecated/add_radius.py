@@ -7,7 +7,7 @@ from operator import add
 import itertools
 from collections import deque, defaultdict
 from scipy import ndimage as ndi
-from skimage.morphology import remove_small_objects#, skeletonize_3d
+from skimage.morphology import remove_small_objects, skeletonize_3d
 from sklearn.neighbors import KDTree
 import tifffile as tif
 from ac_segmentation.deprecated.swc_morphology.classes import Morphology

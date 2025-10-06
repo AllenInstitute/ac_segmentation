@@ -7,7 +7,7 @@ from operator import add
 import itertools
 from collections import deque, defaultdict
 from scipy import ndimage as ndi
-from skimage.morphology import remove_small_objects#, skeletonize_3d
+from skimage.morphology import remove_small_objects, skeletonize_3d
 import tifffile as tif
 from ac_segmentation.deprecated.add_radius import add_radius_to_morph, n_nodes_up_and_down, n_nodes_up, n_nodes_down, bounding_box, add_missing_radius_vals
 

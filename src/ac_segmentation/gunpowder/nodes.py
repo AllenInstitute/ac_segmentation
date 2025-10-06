@@ -1,3 +1,6 @@
+# Add cutout capability
+import matplotlib.pyplot as plt
+
 import gunpowder as gp
 from gunpowder.ext import ZarrFile
 from gunpowder.batch import Batch
@@ -7,8 +10,9 @@ from gunpowder.roi import Roi
 from gunpowder.array import Array
 from gunpowder.array_spec import ArraySpec
 from gunpowder.provider_spec import ProviderSpec
-from zarr._storage.store import BaseStore
-from zarr import N5Store, N5FSStore
+
+#from zarr._storage.store import BaseStore
+#from zarr import N5Store, N5FSStore
 
 import numpy as np
 from collections.abc import MutableMapping
@@ -22,54 +26,18 @@ from datetime import datetime
 import itertools
 from functools import lru_cache
 
+import tensorstore as ts
+
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
 from ac_segmentation.utils.preprocess import lut_preprocess_array_minmax
 
+    
 
 logger = logging.getLogger(__name__)
 
-
-
-def no_neg(value):
-    return value if value >= 0 else 0
-
-@lru_cache(maxsize=40)
-def make_mask(shape, depth=1):
-    min_dim = min(shape)
-    out = np.ones((min_dim,min_dim,min_dim))
-    layers = int(min_dim*(depth/2))
-    intervals = np.linspace(0, .8, layers)
-    
-    for ind, inter in enumerate(intervals):
-        out[ind,:,:] = inter
-        out[min_dim-1-ind,:,:] = inter
-    
-    y_swap = np.transpose(out.copy(), (1, 0, 2))  
-    z_swap = np.transpose(out.copy(), (2, 1, 0))
-
-    out = np.minimum(out, y_swap.copy())
-    out = np.minimum(out,  z_swap.copy())
-
-    if (shape == (shape[0],) * len(shape)) == False:
-        x1, y1, z1 = out.shape
-        x2, y2, z2 = shape
-        
-        x = np.linspace(0, x1 - 2, x2).astype(int)
-        y = np.linspace(0, y1 - 2, y2).astype(int)
-        z = np.linspace(0, z1 - 2, z2).astype(int)
-        out = ((out[np.ix_(x, y, z)]))
-
-    return out
-
-def perimeter_weighted_blend(array1, array2, depth=.5):
-    weight_map = make_mask(array1.shape, depth)
-    return (array1 * (1 - weight_map) + array2 * (weight_map))
-    
-    
-
 class TensorStoreSource(gp.ZarrSource):
 
-    def __init__(self, tensorstore=None, array_specs=None, channels_first=True):
+    def __init__(self, tensorstore=None, array_specs=None, channels_first=True, add_margin=None):
         if array_specs is None:
             self.array_specs = {}
         else:
@@ -77,6 +45,8 @@ class TensorStoreSource(gp.ZarrSource):
 
         self.channels_first = channels_first
         self.tensorstore = tensorstore
+        self.add_margin = add_margin
+        self.shape = next(iter(self.tensorstore.values())).shape
 
     def _get_offset(self, dataset):
         if "offset" not in dataset.attrs:
@@ -111,6 +81,89 @@ class TensorStoreSource(gp.ZarrSource):
 
         logger.debug("%s provides %s with spec %s", name, key, spec)
 
+
+    def __read_spec(self, array_key, tensorstore):
+        dataset = tensorstore
+
+        if array_key in self.array_specs:
+            spec = self.array_specs[array_key].copy()
+        else:
+            spec = ArraySpec()
+
+        if spec.voxel_size is None:
+            voxel_size = Coordinate((1,) * len(dataset.shape))
+            logger.warning(
+                "WARNING: File %s does not contain resolution information for %s, voxel size has been set to %s. This might not be  you want.",
+                tensorstore.kvstore.path,
+                array_key,
+                spec.voxel_size,
+            )
+
+        spec.voxel_size = voxel_size
+        self.ndims = len(spec.voxel_size)
+
+        if spec.roi is None:
+            #offset = self._get_offset(dataset) RETURN TO THIS!
+            offset = None
+            if offset is None:
+                offset = Coordinate((0,) * self.ndims)
+
+            if self.channels_first:
+                shape = Coordinate(dataset.shape[-self.ndims :])
+            else:
+                shape = Coordinate(dataset.shape[: self.ndims])
+
+            spec.roi = Roi(offset, shape * spec.voxel_size)
+        
+
+        if spec.dtype is not None:
+            assert spec.dtype == dataset.dtype.name, (
+                "dtype %s provided in array_specs for %s, but differs from dataset dtype %s"
+                % (self.array_specs[array_key].dtype, array_key, dataset.dtype.name)
+            )
+        else:
+            spec.dtype = dataset.dtype.name
+
+        if spec.interpolatable is None:
+            spec.interpolatable = np.issubdtype(spec.dtype, np.floating) or (spec.dtype == np.uint8)
+            logger.warning(
+                "WARNING: You didn't set 'interpolatable' for %s. Based on the dtype %s, it has been set to %s. This might not be  you want.",
+                array_key,
+                spec.dtype,
+                spec.interpolatable,
+            )
+
+        return spec
+
+    def name(self):
+        return 'TensorStoreSource[' + list(self.tensorstore.values())[0].kvstore.path + ']'
+
+
+    def __read(self, data_file, roi):
+        c = len(data_file.shape) - self.ndims
+
+        slices = roi.to_slices()
+
+        if self.add_margin:
+            slices = tuple(
+                    slice(
+                        max(0, s.start - self.add_margin) if s.start != 0 else 0,
+                        min(self.shape[i], s.stop + self.add_margin),
+                        s.step
+                    )
+                    for i, s in enumerate(slices))
+
+
+        if self.channels_first:
+            array = data_file[(slice(None),) * c + slices].read().result()
+        else:
+            array = data_file[slices + (slice(None),) * c].read().result()
+            array = np.transpose(array, axes=[i + self.ndims for i in range(c)] + list(range(self.ndims)))
+
+
+        return array
+
+
     def provide(self, request):
         timing = Timing(self)
         timing.start()
@@ -132,9 +185,16 @@ class TensorStoreSource(gp.ZarrSource):
                 # create array spec
                 array_spec = self.spec[array_key].copy()
                 array_spec.roi = request_spec.roi
+                array = self.__read(tensorstore, dataset_roi)
                 
+                #if self.add_margin:
+                    #nshape = array.shape
+                    #dataset_roi.shape = nshape
+                    #array_spec.roi.shape = nshape
+                    #request_spec.roi = array_spec.roi
+                    
                 # add array to batch
-                batch.arrays[array_key] = Array(self.__read(tensorstore, dataset_roi), array_spec)
+                batch.arrays[array_key] = Array(array, array_spec)
 
         logger.debug("done")
 
@@ -143,71 +203,6 @@ class TensorStoreSource(gp.ZarrSource):
 
         return batch
 
-    def __read(self, data_file, roi):
-        c = len(data_file.shape) - self.ndims
-
-        if self.channels_first:
-            array = data_file[(slice(None),) * c + roi.to_slices()].read().result()
-        else:
-            array = data_file[roi.to_slices() + (slice(None),) * c].read().result()
-            array = np.transpose(array, axes=[i + self.ndims for i in range(c)] + list(range(self.ndims)))
-
-        return array
-
-    def __read_spec(self, array_key, tensorstore):
-        dataset = tensorstore
-
-        if array_key in self.array_specs:
-            spec = self.array_specs[array_key].copy()
-        else:
-            spec = ArraySpec()
-
-        if spec.voxel_size is None:
-            voxel_size = Coordinate((1,) * len(dataset.shape))
-            logger.warning(
-                "WARNING: File %s does not contain resolution information for %s, voxel size has been set to %s. This might not be what you want.",
-                tensorstore.kvstore.path,
-                array_key,
-                spec.voxel_size,
-            )
-
-        spec.voxel_size = voxel_size
-        self.ndims = len(spec.voxel_size)
-
-        if spec.roi is None:
-            #offset = self._get_offset(dataset) RETURN TO THIS!
-            offset = None
-            if offset is None:
-                offset = Coordinate((0,) * self.ndims)
-
-            if self.channels_first:
-                shape = Coordinate(dataset.shape[-self.ndims :])
-            else:
-                shape = Coordinate(dataset.shape[: self.ndims])
-
-            spec.roi = Roi(offset, shape * spec.voxel_size)
-
-        if spec.dtype is not None:
-            assert spec.dtype == dataset.dtype.name, (
-                "dtype %s provided in array_specs for %s, but differs from dataset dtype %s"
-                % (self.array_specs[array_key].dtype, array_key, dataset.dtype.name)
-            )
-        else:
-            spec.dtype = dataset.dtype.name
-
-        if spec.interpolatable is None:
-            spec.interpolatable = np.issubdtype(spec.dtype, np.floating) or (spec.dtype == np.uint8)
-            logger.warning(
-                "WARNING: You didn't set 'interpolatable' for %s. Based on the dtype %s, it has been set to %s. This might not be what you want.",
-                array_key,
-                spec.dtype,
-                spec.interpolatable,
-            )
-
-        return spec
-
-    def name(self):
-        return 'TensorStoreSource[' + list(self.tensorstore.values())[0].kvstore.path + ']'
         
         
 class ContrastAdjust(gp.BatchFilter):
@@ -252,21 +247,51 @@ class ContrastAdjust(gp.BatchFilter):
         # Store it in the batch
         batch = gp.Batch()
         batch[self.output_key] = adjusted_array
-
+        
         return batch
 
+
 class ApplyModel(gp.BatchFilter):
-    def __init__(self, model, input_key, ts_array, device):
+    def __init__(self, model, input_key, ts_array, device, mask=None, dsfactor=1, add_margin=None):
         self.model = model
         self.input_key = input_key
         self.ts_array = ts_array
         self.write_objects = []
         self.device = device
+        self.mask = mask
+        self.dsfactor = dsfactor
+        self.add_margin = add_margin
 
     def process(self, batch, request):
         # Get the input data
+        roi = batch.arrays[self.input_key].spec.roi
+        slices = roi.to_slices()
+        if self.add_margin:
+            slices = tuple(
+                    slice(
+                        max(0, s.start - self.add_margin) if s.start != 0 else 0,
+                        min(self.ts_array.shape[i], s.stop + self.add_margin),
+                        s.step
+                    )
+                    for i, s in enumerate(slices))
+
+        start = [s.start for s in slices]
+        end = [s.stop for s in slices]
+        _,_,x1, y1, z1 = start
+        _,_,x2, y2, z2 = end
+        
+        if isinstance(self.mask, np.ndarray):
+            ds_start, ds_end = np.ceil(np.array(start) / self.dsfactor).astype(int), np.ceil(np.array(end) / self.dsfactor).astype(int)
+            dx1, dy1, dz1 = ds_start[-3:]
+            dx2, dy2, dz2 = ds_end[-3:]
+
+            if np.all(self.mask[0,0,dx1:dx2,dy1:dy2,dz1:dz2] > 0):
+                return
+    
         input_data = batch[self.input_key].data
-        og_shape = input_data.shape
+
+        tx,ty,tz = tuple((x // 16) * 16 for x in input_data.shape[2:])
+        input_data = input_data[:,:,:tx,:ty,:tz]
 
         # CHECK THISSSSS!! 
         if input_data.dtype != np.int16:
@@ -274,36 +299,23 @@ class ApplyModel(gp.BatchFilter):
         if len(input_data.shape)<5:
             x,y,z = input_data.shape
             input_data = input_data.reshape(1, 1, x, y, z)
-            
+
         # Convert input data to a tensor
         input_tensor = torch.from_numpy(input_data).float().to(self.device)
 
         # Run the model
-        with torch.no_grad():
+        with torch.inference_mode():
             output_tensor = self.model(input_tensor)
 
         # Convert output tensor to probability map
         output_data = output_tensor[0].data.cpu()
-        output_data = torch.special.expit(output_data).numpy()[0,0,:,:,:]
-
-        # Write predictions to TensorStore
-        roi = batch.arrays[self.input_key].spec.roi
-        offset = roi.get_begin()[-3:]
-
-        arr_blend = self.ts_array[offset[0]:offset[0] + output_data.shape[0],
-                        offset[1]:offset[1] + output_data.shape[1],
-                        offset[2]:offset[2] + output_data.shape[2]].read().result()
+        output_data = torch.special.expit(output_data).numpy()
         
-        if np.isneginf(arr_blend).any():
-            arr_blend[arr_blend == -np.inf] = 0
-        arr_blend += output_data
+        if np.isneginf(output_data).any():
+            output_data[output_data == -np.inf] = 0
+            
+        self.write_objects.append([[x1,x1+tx,y1,y1+ty,z1,z1+tz], output_data])
         
-        write_obj = self.ts_array[offset[0]:offset[0] + output_data.shape[0],
-                        offset[1]:offset[1] + output_data.shape[1],
-                        offset[2]:offset[2] + output_data.shape[2]].write(arr_blend)
-        
-        self.write_objects.append(write_obj) 
-
     def get_write_objects(self):
         return self.write_objects
 
@@ -312,7 +324,7 @@ class ApplyModel(gp.BatchFilter):
         
         
 class ContrastAdjustWrite(gp.BatchFilter):
-    def __init__(self, input_key, output_key, input_arr, output_arr, int_range=None, version='range'):
+    def __init__(self, input_key, output_key, input_arr, output_arr, int_range=None, version='range', mask=None, dsfactor=1, add_margin=None, depth=.9):
         self.input_key = input_key
         self.output_key = output_key
         self.int_range = int_range
@@ -320,6 +332,10 @@ class ContrastAdjustWrite(gp.BatchFilter):
         self.out_array = output_arr
         self.in_array = input_arr
         self.write_objects = []
+        self.mask = mask
+        self.dsfactor = dsfactor
+        self.add_margin=add_margin
+        self.depth=.6
 
     def setup(self):
         pass
@@ -331,13 +347,33 @@ class ContrastAdjustWrite(gp.BatchFilter):
 
     def process(self, batch, request):
         roi = batch.arrays[self.input_key].spec.roi
-        start, end = list(roi.begin[-3:]), list(roi.end[-3:])
-        x1, y1, z1 = start
-        x2, y2, z2 = end
+        slices = roi.to_slices()
+        if self.add_margin:
+            slices = tuple(
+                    slice(
+                        max(0, s.start - self.add_margin) if s.start != 0 else 0,
+                        min(self.out_array.shape[i], s.stop + self.add_margin),
+                        s.step
+                    )
+                    for i, s in enumerate(slices))
 
+        start = [s.start for s in slices]
+        end = [s.stop for s in slices]
+        _,_,x1, y1, z1 = start
+        _,_,x2, y2, z2 = end
+        
+        if isinstance(self.mask, np.ndarray):
+            ds_start, ds_end = np.ceil(np.array(start) / self.dsfactor).astype(int), np.ceil(np.array(end) / self.dsfactor).astype(int)
+            dx1, dy1, dz1 = ds_start[-3:]
+            dx2, dy2, dz2 = ds_end[-3:]
+
+            if np.all(self.mask[0,0,dx1:dx2,dy1:dy2,dz1:dz2] > 0):
+                return
+    
         input_data = batch[self.input_key].data
-
         p1, p2 = np.percentile(input_data, self.int_range)
+
+        #print(input_data.shape, start,end)
         
         if np.any(input_data) == True:
             if len(self.in_array.shape) ==5:
@@ -347,22 +383,52 @@ class ContrastAdjustWrite(gp.BatchFilter):
             output_data = (output_data * 255)
 
             if len(self.in_array.shape) ==5:
-                arr2 = self.out_array[0,0,x1:x2, y1:y2, z1:z2].read().result()
-                if (output_data.shape[-3:] == (output_data.shape[2],) * len(output_data.shape[-3:])) == True: ###can i remove this???
-                    output_data = perimeter_weighted_blend(arr2, output_data, depth=.9).astype('uint8')
-                    write_obj = self.out_array[:,:,x1:x2, y1:y2, z1:z2].write(output_data[None, None, :])
-                self.write_objects.append(write_obj)
+                try:
+                    self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
+                except:
+                    pass
             else:
-                arr2 = self.out_array[x1:x2, y1:y2, z1:z2].read().result()
-                if (output_data.shape == (output_data.shape[0],) * len(output_data.shape)) == True:
-                    output_data = perimeter_weighted_blend(arr2, output_data, depth=.9).astype('uint8')
-                    write_obj = self.out_array[x1:x2, y1:y2, z1:z2].write(output_data)
-                self.write_objects.append(write_obj)
+                self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
 
     def get_write_objects(self):
         return self.write_objects
 
     def clear_write_objects(self):
         self.write_objects = []
+
+def no_neg(value):
+    return value if value >= 0 else 0
+
+@lru_cache(maxsize=10)
+def make_mask(shape, depth=1):
+    min_dim = min(shape)
+    out = np.ones((min_dim,min_dim,min_dim))
+    layers = int(min_dim*(depth/2))
+    intervals = np.linspace(0, .8, layers)
+    
+    for ind, inter in enumerate(intervals):
+        out[ind,:,:] = inter
+        out[min_dim-1-ind,:,:] = inter
+    
+    y_swap = np.transpose(out.copy(), (1, 0, 2))  
+    z_swap = np.transpose(out.copy(), (2, 1, 0))
+
+    out = np.minimum(out, y_swap.copy())
+    out = np.minimum(out,  z_swap.copy())
+
+    if (shape == (shape[0],) * len(shape)) == False:
+        x1, y1, z1 = out.shape
+        x2, y2, z2 = shape
         
+        x = np.linspace(0, x1 - 2, x2).astype(int)
+        y = np.linspace(0, y1 - 2, y2).astype(int)
+        z = np.linspace(0, z1 - 2, z2).astype(int)
+        out = ((out[np.ix_(x, y, z)]))
+
+    return out
+
+def perimeter_weighted_blend(array1, array2, depth=.5):
+    weight_map = make_mask(array1.shape, depth)
+    return (array1 * (1 - weight_map) + array2 * (weight_map))
+
 

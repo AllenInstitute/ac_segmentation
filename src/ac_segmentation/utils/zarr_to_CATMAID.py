@@ -1,15 +1,17 @@
 from ac_segmentation.utils.tensorstore import *
 
-def zarr_to_CATMAID_project(zarr_path, out_path, container_id, AWS_param, project='NewProject', 
+def zarr_to_CATMAID_project(zarr_path, out_path, container_id, AWS_Key, AWS_Secret_Key, project='NewProject', 
                             stack='NewStack', store='s3', chunks=(64,64,64), translation=(0,0,0), cutout=None, tile_dim=[128,128], ortho=False):
 
     #convert zarr to precomputed
-    zarr_to_precomputed(zarr_path=zarr_path, AWS_param=AWS_param, 
-                           out_path=out_path, store=store, chunks=chunks, cutout=cutout)
+    zarr_to_precomputed(zarr_path=zarr_path, AWS_Key=AWS_Key, AWS_Secret_Key=AWS_Secret_Key, 
+                           out_path=out_path, store=store, chunks=(64,64,64), cutout=cutout)
     
     #extract url 
-    bucket,path = split_s3_path(out_path)
-    url = os.path.join('https://',bucket+'.s3-'+AWS_param.region+'.amazonaws.com/',path,"%SCALE_DATASET%/")
+    split = out_path.split("/")
+    bucket = split[0]
+    key = out_path.replace(bucket+"/", '')
+    url = os.path.join("https://", bucket+".s3-us-west-2.amazonaws.com", key, "%SCALE_DATASET%/")
     
     #get resolution and shape
     shape = open_tensor(zarr_path + "0/")[0,0,:,:,:].shape
@@ -19,7 +21,7 @@ def zarr_to_CATMAID_project(zarr_path, out_path, container_id, AWS_param, projec
         shape = [x,y,z]
     r_path = os.path.join(os.path.dirname(os.path.dirname(zarr_path + "0/")), ".zattrs")
     res = json.loads(open(r_path, "r").read())['multiscales'][0]['datasets'][0]['coordinateTransformations'][0]['scale'][2:]
-
+    
     #create project data json
     if ortho==True:
       stack_file = [{
@@ -118,7 +120,7 @@ def zarr_to_CATMAID_project(zarr_path, out_path, container_id, AWS_param, projec
     copy_string = json_fpath + " " + container_id + ":" + "/home/django/projects/data.json"
     os.system("docker cp " + str(copy_string))
     container.exec_run('python3 manage.py catmaid_import_projects --input data.json --permission user:admin:can_import user:admin:can_annotate')
-    
+
     #clean-up
     container.exec_run('rm input data.json')
     client.close()
