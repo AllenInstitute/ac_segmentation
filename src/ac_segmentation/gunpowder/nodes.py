@@ -30,6 +30,7 @@ import tensorstore as ts
 
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
 from ac_segmentation.utils.preprocess import lut_preprocess_array_minmax
+from bump_mask import make_mask
 
     
 
@@ -205,6 +206,86 @@ class TensorStoreSource(gp.ZarrSource):
 
         
         
+class ContrastAdjustWrite(gp.BatchFilter):
+    def __init__(self, input_key, output_key, input_arr, output_arr, int_range=None, version='range', mask=None, dsfactor=1, add_margin=None, depth=.9):
+        self.input_key = input_key
+        self.output_key = output_key
+        self.int_range = int_range
+        self.version = version
+        self.out_array = output_arr
+        self.in_array = input_arr
+        self.write_objects = []
+        self.mask = mask
+        self.dsfactor = dsfactor
+        self.add_margin=add_margin
+        self.depth=.6
+
+    def setup(self):
+        pass
+
+    def prepare(self, request):
+        deps = gp.BatchRequest()
+        deps[self.input_key] = request[self.output_key].copy()
+        return deps
+
+    def process(self, batch, request):
+        roi = batch.arrays[self.input_key].spec.roi
+        slices = roi.to_slices()
+        if self.add_margin:
+            slices = tuple(
+                    slice(
+                        max(0, s.start - self.add_margin) if s.start != 0 else 0,
+                        min(self.out_array.shape[i], s.stop + self.add_margin),
+                        s.step
+                    )
+                    for i, s in enumerate(slices))
+
+        start = [s.start for s in slices]
+        end = [s.stop for s in slices]
+        _,_,x1, y1, z1 = start
+        _,_,x2, y2, z2 = end
+        
+        input_data = batch[self.input_key].data
+               
+        if isinstance(self.mask, np.ndarray):
+            ds_start, ds_end = np.ceil(np.array(start) / self.dsfactor).astype(int), np.ceil(np.array(end) / self.dsfactor).astype(int)
+            dx1, dy1, dz1 = ds_start[-3:]
+            dx2, dy2, dz2 = ds_end[-3:]
+            
+            mask_slice = self.mask[0,0,dx1:dx2,dy1:dy2,dz1:dz2]
+            
+            if np.all(mask_slice > 0):
+                return  
+                     
+                                                          
+
+        p1, p2 = np.percentile(input_data, self.int_range)
+
+        
+        if np.any(input_data) == True:
+            if len(self.in_array.shape) ==5:
+                input_data = input_data[0,0,:,:,:]
+            scale = 1.0 / (p2 - p1) if p2 > p1 else 1.0
+            output_data = np.clip((input_data - p1) * scale, 0, 1)
+            output_data = (output_data * 255)                                            
+                        
+
+            if len(self.in_array.shape) ==5:
+                try:
+                    self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
+                except:
+                    pass
+            else:
+                self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
+
+    def get_write_objects(self):
+        return self.write_objects
+
+    def clear_write_objects(self):
+        self.write_objects = []
+
+
+
 class ContrastAdjust(gp.BatchFilter):
     def __init__(self, input_key, output_key, int_range=None, version='range'):
         self.input_key = input_key
@@ -322,113 +403,112 @@ class ApplyModel(gp.BatchFilter):
     def clear_write_objects(self):
         self.write_objects = []
         
-        
-class ContrastAdjustWrite(gp.BatchFilter):
-    def __init__(self, input_key, output_key, input_arr, output_arr, int_range=None, version='range', mask=None, dsfactor=1, add_margin=None, depth=.9):
+ 
+class Fuse(gp.BatchFilter):
+    def __init__(self, input_key, out_arr, x0_adj, y0_adj, z0_adj, flatten):
         self.input_key = input_key
-        self.output_key = output_key
-        self.int_range = int_range
-        self.version = version
-        self.out_array = output_arr
-        self.in_array = input_arr
         self.write_objects = []
-        self.mask = mask
-        self.dsfactor = dsfactor
-        self.add_margin=add_margin
-        self.depth=.6
+        self.x0_adj = x0_adj
+        self.y0_adj = y0_adj
+        self.z0_adj = z0_adj
+        self.flatten = flatten
+        self.out_arr = out_arr
+        self.write_objects = []
 
-    def setup(self):
-        pass
-
-    def prepare(self, request):
-        deps = gp.BatchRequest()
-        deps[self.input_key] = request[self.output_key].copy()
-        return deps
 
     def process(self, batch, request):
+        # Get the input data
         roi = batch.arrays[self.input_key].spec.roi
         slices = roi.to_slices()
-        if self.add_margin:
-            slices = tuple(
-                    slice(
-                        max(0, s.start - self.add_margin) if s.start != 0 else 0,
-                        min(self.out_array.shape[i], s.stop + self.add_margin),
-                        s.step
-                    )
-                    for i, s in enumerate(slices))
-
-        start = [s.start for s in slices]
-        end = [s.stop for s in slices]
-        _,_,x1, y1, z1 = start
-        _,_,x2, y2, z2 = end
+        _,_,xb, yb, zb = [s.start for s in slices]
+        _,_,xb_end, yb_end, zb_end = [s.stop for s in slices]
+                
+        A_block = batch[self.input_key].data
         
-        if isinstance(self.mask, np.ndarray):
-            ds_start, ds_end = np.ceil(np.array(start) / self.dsfactor).astype(int), np.ceil(np.array(end) / self.dsfactor).astype(int)
-            dx1, dy1, dz1 = ds_start[-3:]
-            dx2, dy2, dz2 = ds_end[-3:]
-
-            if np.all(self.mask[0,0,dx1:dx2,dy1:dy2,dz1:dz2] > 0):
-                return
-    
-        input_data = batch[self.input_key].data
-        p1, p2 = np.percentile(input_data, self.int_range)
-
-        #print(input_data.shape, start,end)
+        # ---- SKIP if block is all zeros ----
+        if not np.any(A_block):
+            return
         
-        if np.any(input_data) == True:
-            if len(self.in_array.shape) ==5:
-                input_data = input_data[0,0,:,:,:]
-            scale = 1.0 / (p2 - p1) if p2 > p1 else 1.0
-            output_data = np.clip((input_data - p1) * scale, 0, 1)
-            output_data = (output_data * 255)
+        #adjust according to translation
+        out_x0 = self.x0_adj + (xb)
+        out_x1 = out_x0 + (xb_end - xb)
+        out_y0 = self.y0_adj + (yb)
+        out_y1 = out_y0 + (yb_end - yb)
+        out_z0 = self.z0_adj + (zb)
+        out_z1 = out_z0 + (zb_end - zb)
+        
+        if self.flatten['surface_map'] is not None:
+            smap = flatten['surface_map']   
+            if self.flatten['axis'] == 'x':
+                #adjust out indices 
+                out_x1 += smap.max()
+                B_block = np.zeros((1,1,out_x1-out_x0,out_y1-out_y0,out_z1-out_z0))
+            
+                ix,iy,iz = A_block.shape[-3:]
+                for y in range(iy):
+                    for z in range(iz):
+                        a_row = A_block[:,:,:,y,z]
+                        x_shift = smap[y+yb,z+zb]
+                        B_block[:, :, x_shift:x_shift+ix, y, z] = a_row
+                                                                        
 
-            if len(self.in_array.shape) ==5:
-                try:
-                    self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
-                except:
-                    pass
-            else:
-                self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
+            if self.flatten['axis'] == 'y':
+                #adjust out indices 
+                out_y1 += smap.max()
+                B_block = np.zeros((1,1,out_x1-out_x0,out_y1-out_y0,out_z1-out_z0))
+            
+                ix,iy,iz = A_block.shape[-3:]
+                for x in range(ix):
+                    for z in range(iz):
+                        a_row = A_block[:,:,x,:,z]
+                        y_shift = smap[x+xb,z+zb]
+                        B_block[:, :, x, y_shift:y_shift+iy, z] = a_row
+                                                                      
+
+            if self.flatten['axis'] == 'z':
+                #adjust out indices 
+                out_z1 += smap.max()
+                B_block = np.zeros((1,1,out_x1-out_x0,out_y1-out_y0,out_z1-out_z0))
+            
+                ix,iy,iz = A_block.shape[-3:]
+                for x in range(ix):
+                    for y in range(iy):
+                        a_row = A_block[:,:,x,y,:]
+                        z_shift = smap[x+xb,y+yb]
+                        B_block[:, :, x, y, z_shift:z_shift+iz] = a_row
+                                                            
+        else:
+            B_block = A_block 
+            
+        self.write_objects.append([[out_x0,out_x1,out_y0,out_y1,out_z0,out_z1], B_block])                                      
 
     def get_write_objects(self):
         return self.write_objects
 
     def clear_write_objects(self):
         self.write_objects = []
+        
+        
+
+
+def total_volume_shape(arrs, translations):
+    mins = []
+    maxs = []
+    for A,(x,y,z) in zip(arrs, translations):
+        X,Y,Z = A.shape[-3:]
+        mins.append([x,     y,     z])
+        maxs.append([x+X,   y+Y,   z+Z])
+    mins = np.min(mins, axis=0)
+    maxs = np.max(maxs, axis=0)
+    return tuple((maxs - mins).astype(int)), mins
+
 
 def no_neg(value):
     return value if value >= 0 else 0
 
-@lru_cache(maxsize=10)
-def make_mask(shape, depth=1):
-    min_dim = min(shape)
-    out = np.ones((min_dim,min_dim,min_dim))
-    layers = int(min_dim*(depth/2))
-    intervals = np.linspace(0, .8, layers)
-    
-    for ind, inter in enumerate(intervals):
-        out[ind,:,:] = inter
-        out[min_dim-1-ind,:,:] = inter
-    
-    y_swap = np.transpose(out.copy(), (1, 0, 2))  
-    z_swap = np.transpose(out.copy(), (2, 1, 0))
-
-    out = np.minimum(out, y_swap.copy())
-    out = np.minimum(out,  z_swap.copy())
-
-    if (shape == (shape[0],) * len(shape)) == False:
-        x1, y1, z1 = out.shape
-        x2, y2, z2 = shape
-        
-        x = np.linspace(0, x1 - 2, x2).astype(int)
-        y = np.linspace(0, y1 - 2, y2).astype(int)
-        z = np.linspace(0, z1 - 2, z2).astype(int)
-        out = ((out[np.ix_(x, y, z)]))
-
-    return out
 
 def perimeter_weighted_blend(array1, array2, depth=.5):
-    weight_map = make_mask(array1.shape, depth)
+    weight_map = make_mask(array1.shape[-3:], tuple(int(t*0.5) for t in array1.shape[-3:]), edge=None, bump='zung')
     return (array1 * (1 - weight_map) + array2 * (weight_map))
 
 

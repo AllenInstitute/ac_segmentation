@@ -11,10 +11,10 @@ scikit-image>=0.14.2
 scikit-learn
 pandas
 joblib
-kimimaro
+kimimaro==4.1.2
 zarr
 argschema
-tensorstore==0.1.67
+tensorstore
 shapely
 scipy
 connected-components-3d

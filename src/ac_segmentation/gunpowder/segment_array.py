@@ -2,6 +2,8 @@ import ac_segmentation.neurotorch.nets.RSUNet
 from ac_segmentation.gunpowder.nodes import TensorStoreSource, ApplyModel, ContrastAdjust
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
 from ac_segmentation.utils.preprocess import create_chunked_dims, create_overlap_chunks
+from bump_mask import *
+
 
 import tensorstore as ts
 import gunpowder as gp
@@ -14,6 +16,7 @@ import pathlib
 import docker
 import torch
 import ast
+
 
 
 RSUNet = ac_segmentation.neurotorch.nets.RSUNet.RSUNet
@@ -100,6 +103,9 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
         if np.any(dif[-3:] < iter_size[-1]) == True:
             x,y,z = np.array(end[i][-3:])-np.array(iter_size[-3:])
             start[i][-3:] = [x,y,z]
+            
+            
+    weight_map = make_mask(iter_size[-3:], tuple(int(t*0.5) for t in iter_size[-3:]), edge=None, bump='zung')  
 
     #run pipeline    
     with gp.build(pipeline):
@@ -108,7 +114,7 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
             arr = np.array(end[i])-np.array(start[i])
             total_roi = gp.Roi(start[i], arr)
     
-            # Create a request for the entire volume
+            # Create a request for volume
             request = gp.BatchRequest()
             request[raw] = total_roi
             
@@ -132,18 +138,31 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
                 
                 for attempt in range(max_retries):
                     try:
-                        temp_arr = np.zeros(temp_shape, dtype='uint8')
+                        #temp_arr = np.zeros(temp_shape, dtype='uint8')
+                        temp_arr = output_arr[:, :, mx1:x2, my1:y2, mz1:z2].read().result().astype('int16')
                         for write in write_objects:
                             ox1,ox2,oy1,oy2,oz1,oz2 = write[0]
                             arr2 = temp_arr[0,0,ox1-mx1:ox2-mx1, oy1-my1:oy2-my1, oz1-mz1:oz2-mz1]
-                            write[1] = (write[1]*255).astype('uint8')
-                            write_data = np.maximum(arr2, write[1])
+                            write[1] = (write[1]*255).astype('int16')
+                                                       
+                            
+                            if write[1].shape[-3:] != iter_size[-3:]: ###added
+                                weight_map = make_mask(write[1].shape[-3:], tuple(int(t*0.25) for t in write[1].shape[-3:]), edge=None, bump='zung')    
+                            
+                            #apply weighted map
+                            write[1] = write[1]*weight_map
+                            write_data = np.add(arr2, write[1])
+                            write_data[write_data > 254] = 254
+                            
+                                                   
                             temp_arr[:,:,ox1-mx1:ox2-mx1, oy1-my1:oy2-my1, oz1-mz1:oz2-mz1] = write_data[None, None, :]
                             
                         if len(input_arr.shape) == 5:
-                            final_write.append(output_arr[:, :, mx1:x2, my1:y2, mz1:z2].write(temp_arr[:, :, :, :, :]))
+                            #final_write.append(output_arr[:, :, mx1:x2, my1:y2, mz1:z2].write(temp_arr[:, :, :, :, :]))
+                            output_arr[:,:,mx1:x2, my1:y2, mz1:z2].write(temp_arr[:, :, :].astype('uint8')).result()
                         else:
-                            final_write.append(output_arr[mx1:x2, my1:y2, mz1:z2].write(temp_arr[:, :, :]))
+                            #final_write.append(output_arr[mx1:x2, my1:y2, mz1:z2].write(temp_arr[:, :, :]))
+                            output_arr[mx1:x2, my1:y2, mz1:z2].write(temp_arr[:, :, :].astype('uint8')).result()
                         success = True
                         break  # Exit loop if successful
                     except Exception as e:
@@ -154,9 +173,7 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
                 apply_model.clear_write_objects()
                 etime = datetime.now()
                 print(i, etime - stime)
-    
-    for write in final_write:
-        write.result()
+
                 
     etime = datetime.now()
     print(etime-stime)
@@ -173,17 +190,19 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
         f.write(str(seg_card))
     
     return seg_card
-      
+    
+
+
 class SegmentZarrParameters(argschema.ArgSchema):
-    input_zarr = argschema.fields.String(required=True)
+    gpu_device = argschema.fields.String(required=False, allow_none=True, default=None)
+    input_path = argschema.fields.String(required=True)
     weights_file = argschema.fields.InputFile(required=True)
-    probability_output = argschema.fields.String(required=True)         
+    output_path = argschema.fields.String(required=True)         
     filter_max_intensity = argschema.fields.Int(required=False, default=30000, allow_non=True)
-    rescale_perc = argschema.fields.String(allow_none=True, default='[10,99]')
-    cutout = argschema.fields.Raw(required=False, allow_none=True, missing=None)
+    rescale_perc = argschema.fields.String(allow_none=True, default="None")
+    cutout = argschema.fields.String(required=False, allow_none=True, missing=None)
     dsfactor = argschema.fields.Int(required=False, default=1, allow_none=True)
     mask_path = argschema.fields.String(required=False, allow_none=True, missing=None)
-    iter_size = argschema.fields.Int(required=False, default=50, allow_none=True)
     
     AWS_key = argschema.fields.String(required=False, default=None, allow_none=True)
     AWS_sec_key = argschema.fields.String(required=False, default=None, allow_none=True)
@@ -193,97 +212,79 @@ class SegmentZarrParameters(argschema.ArgSchema):
     
 class SegmentZarrModule(argschema.ArgSchemaParser):
     default_schema = SegmentZarrParameters
-            
 
     def run(self):
 
-        # --- Convert all "None" strings to actual None ---
+        #Convert all "None" strings to actual None 
         for key, value in self.args.items():
             if value == "None":
                 self.args[key] = None
 
-        # --- Convert bound_box from string to list if present ---
-        if self.args['cutout'] and type(self.args['cutout'])==str:
+        #Convert cutout from string to list if present 
+        if self.args['cutout'] is not None:
             self.args['cutout'] = [int(x.strip("'")) for x in self.args["cutout"].split(',')]
-           
-        
+            
+            
+        #Open input tensor and create output tensor    
         kvstore_in, kvstore_out = None, None
-        if 's3' in self.args['input_zarr']:
+        in_path = self.args['input_path']
+        out_path = self.args['output_path']  
+        
+        if not self.args['endpoint']:
+            endpoint=None
+            
+        if 's3://' in self.args['input_path']:
             if self.args['profile']:
                 AWS_param = AWS_Parameters(profile=self.args['profile'], region=self.args['region'], endpoint_url=self.args['endpoint'])      
-                kvstore_in = create_kvstore(fpath=str(self.args['input_zarr']), store='s3', AWS_param=AWS_param)              
+                kvstore_in = create_kvstore(fpath=str(in_path), store='s3', AWS_param=AWS_param)              
                                         
             if self.args['AWS_key']:
                 AWS_param = AWS_Parameters(region=self.args['region'], endpoint_url=self.args['endpoint'])
                 AWS_param.add_credentials(access_key_id=self.args['AWS_key'], secret_access_key=self.args['AWS_sec_key'])
-                kvstore_in = create_kvstore(fpath=str(self.args['input_zarr']), store='s3', AWS_param=AWS_param)
-                
+                kvstore_in = create_kvstore(fpath=str(in_path), store='s3', AWS_param=AWS_param)
             
-        if 's3' in self.args['probability_output']:
+        if 's3://' in self.args['output_path']:
             if self.args['profile']:
                 AWS_param = AWS_Parameters(profile=self.args['profile'], region=self.args['region'], endpoint_url=self.args['endpoint'])      
-                kvstore_out = create_kvstore(fpath=self.args['probability_output'], store='s3', AWS_param=AWS_param)              
-                                        
+                kvstore_out = create_kvstore(fpath=str(out_path), store='s3', AWS_param=AWS_param)              
+                                    
             if self.args['AWS_key']:                           
                 AWS_param = AWS_Parameters(region=self.args['region'], endpoint_url=self.args['endpoint'])
                 AWS_param.add_credentials(access_key_id=self.args['AWS_key'], secret_access_key=self.args['AWS_sec_key'])
-                kvstore_out = create_kvstore(fpath=self.args['probability_output'], store='s3', AWS_param=AWS_param)
-        else:
-            os.makedirs(self.args['probability_output'],exist_ok=True)               
-        
+                kvstore_out = create_kvstore(fpath=str(out_path), store='s3', AWS_param=AWS_param)              
+                                                         
+                                     
+        input_arr = open_tensor(in_path, kvstore=kvstore_in, bytes_limit= 100_000_000, driver='zarr')
 
-        # --- Open input tensor ---
-        input_arr = open_tensor(
-            self.args['input_zarr'].rstrip('/'),
-            bytes_limit=100_000_000,
-            driver='zarr', kvstore=kvstore_in)
-            
-        chunk_shape = [64, 64, 64]
-        if len(input_arr.shape) == 5:
-            chunk_shape = [1, 1, 64, 64, 64]
-
-        # --- Open or create output tensor ---
         try:
-            output_arr = create_tensor(
-                fpath=self.args['probability_output'],
-                arr_shape=input_arr.shape,
-                dtype='uint8',
-                chunk_shape=chunk_shape,
-                driver='zarr3',
-                codecs={"name": "blosc", "configuration": {"cname": "lz4", "clevel": 4}},
-                sharded=True,
-                shard_factor=16,
-                kvstore=kvstore_out
-            )
+            output_arr = create_tensor(fpath=out_path, arr_shape=input_arr.shape, dtype='uint8', chunk_shape=[1, 1, 64, 64, 64], driver='zarr3', codecs={"name": "blosc", "configuration": {"cname": "lz4", "clevel": 4}}, sharded=True, kvstore=kvstore_out, shard_factor=16)
+                                    
         except:
-            output_arr = open_tensor(
-                self.args['probability_output'],
-                bytes_limit=100_000_000,
-                driver='zarr',
-                kvstore=kvstore_out
-            )
+            output_arr = open_tensor(out_path, bytes_limit= 100_000_000, driver='zarr', kvstore=kvstore_out)                 
 
-        # --- Preprocess ---
-        if self.args.get('rescale_perc'):
+
+        #Preprocess parameters
+        if self.args.get('rescale_perc') != None:
             rescale = ast.literal_eval(self.args["rescale_perc"])
             preprocess = {'method': 'percentile', 'values': rescale}
         else:
-            preprocess = {'method': 'range', 'values': [0, 60000]}
+            preprocess = {'method': 'range', 'values': [0, int(self.args["filter_max_intensity"])]}
+            
 
-        # --- Run segmentation ---
+        #Run segmentation 
         segment_gunpowder(
             input_arr,
             output_arr,
             self.args["weights_file"],
-            iter_size=tuple([self.args["iter_size"]]*3),
-            batch_size=5,
+            iter_size=(64,64,64),
+            batch_size=10,
             cutout=self.args.get("cutout"),
             gpu_device=None,
-            cpus=40,
+            cpus=32,
             preprocess=preprocess,
             mask_file=self.args.get('mask_path'),
             dsfactor=self.args.get('dsfactor'),
-            add_margin=16  
+            add_margin=16      
         )
 
 

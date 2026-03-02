@@ -10,6 +10,7 @@ import json
 import time
 import argschema
 
+
 def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch_size=3, cutout=None, mask_file=None, preprocess={'method':'percentile','values':[96,97]}, dsfactor=1, add_margin=0, depth=.7):
 
     mask=None
@@ -57,6 +58,11 @@ def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch
                 end_new.append(e)
                     
         start, end = start_new, end_new
+        
+        
+        
+    for i in range(len(start)):
+        print(start[i],end[i])
          
     for i in range(len(start)):
         start[i], end[i] = np.minimum(start[i], np.array(input_arr.shape)), np.minimum(end[i], np.array(input_arr.shape))
@@ -65,15 +71,6 @@ def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch
             x,y,z = np.array(end[i][-3:])-np.array(iter_size[-3:])
             start[i][-3:] = [x,y,z]
             
-    
-    ###UPDATED, TEST FIRST      
-    #for i in range(len(start_new)):
-        #start_new[i] = np.minimum(start_new[i], np.array(input_arr.shape))
-        #end_new[i]   = np.minimum(end_new[i],   np.array(input_arr.shape))
-    
-        #for d in range(-3, 0):
-            #if (end_new[i][d] - start_new[i][d]) < iter_size[d]:
-                #start_new[i][d] = end_new[i][d] - iter_size[d]
         
     if len(start) == 0:
         print('Batch_size needs to be lowered to accommodate the cutout size.')
@@ -152,6 +149,7 @@ class ContrastParameters(argschema.ArgSchema):
     cutout = argschema.fields.Raw(required=False, allow_none=True, missing=None)
     dsfactor = argschema.fields.Float(required=False, default=16, allow_none=True)
     mask_path = argschema.fields.String(required=False, allow_none=True, default='None')
+    
     AWS_key = argschema.fields.String(required=False, default=None, allow_none=True)
     AWS_sec_key = argschema.fields.String(required=False, default=None, allow_none=True)
     region = argschema.fields.String(required=False, default='us-west-2')
@@ -172,14 +170,17 @@ class ContrastModule(argschema.ArgSchemaParser):
         if self.args['cutout'] and type(self.args['cutout'])==str:
             self.args['cutout'] = [int(x.strip("'")) for x in self.args["cutout"].split(',')]
                                                      
-                
-        kvstore_in, kvstore_out = None, None                                     
-        for mip in range(0,6):
+             
+        kvstore_in, kvstore_out = None, None                                   
+        for mip in range(0,5):
             in_path = os.path.join(str(self.args['input_path']), str(mip))
             out_path = os.path.join(str(self.args['output_path']), str(mip))
             
             
-            if 's3' in self.args['input_path']:
+            if not self.args['endpoint']:
+                endpoint=None
+                
+            if 's3://' in self.args['input_path']:
                 if self.args['profile']:
                     AWS_param = AWS_Parameters(profile=self.args['profile'], region=self.args['region'], endpoint_url=self.args['endpoint'])      
                     kvstore_in = create_kvstore(fpath=str(in_path), store='s3', AWS_param=AWS_param)              
@@ -189,7 +190,7 @@ class ContrastModule(argschema.ArgSchemaParser):
                     AWS_param.add_credentials(access_key_id=self.args['AWS_key'], secret_access_key=self.args['AWS_sec_key'])
                     kvstore_in = create_kvstore(fpath=str(in_path), store='s3', AWS_param=AWS_param)
             
-            if 's3' in self.args['output_path']:
+            if 's3://' in self.args['output_path']:
                 if self.args['profile']:
                     AWS_param = AWS_Parameters(profile=self.args['profile'], region=self.args['region'], endpoint_url=self.args['endpoint'])      
                     kvstore_out = create_kvstore(fpath=str(out_path), store='s3', AWS_param=AWS_param)              
@@ -199,28 +200,25 @@ class ContrastModule(argschema.ArgSchemaParser):
                     AWS_param.add_credentials(access_key_id=self.args['AWS_key'], secret_access_key=self.args['AWS_sec_key'])
                     kvstore_out = create_kvstore(fpath=str(out_path), store='s3', AWS_param=AWS_param)                                                
             
-            size= max(4,int((64/(2**mip))))
+            size= max(4,int((90/(2**mip))))
             iter_size = tuple(np.array([size]*3))
-            add_margin = int(np.ceil(size/2.5))
+            add_margin = int(np.ceil(size/1.75))
             batch_size = int((500/size))
             shard_factor = int(16/(mip+1))
             ds_factor = self.args['dsfactor']/(2**mip)
+                           
             
-            try:
-                input_arr = open_tensor(in_path, kvstore=kvstore_in, bytes_limit= 100_000_000, driver='zarr')
-                print(input_arr.shape)
+            input_arr = open_tensor(in_path, kvstore=kvstore_in, bytes_limit= 100_000_000, driver='zarr')
 
-                try:
-                    output_arr = create_tensor(fpath=out_path, arr_shape=input_arr.shape, dtype='uint8', chunk_shape=[1, 1, 64, 64, 64], driver='zarr3', codecs={"name": "blosc", "configuration": {"cname": "lz4", "clevel": 4}}, sharded=True, kvstore=kvstore_out, shard_factor=shard_factor)
-                    
-                    
-                except:
-                    output_arr = open_tensor(out_path, bytes_limit= 100_000_000, driver='zarr', kvstore=kvstore_out)      
-                                                                                                                                                   
-                adjust_contrast_gunpowder(input_arr, output_arr, iter_size=iter_size, batch_size=batch_size, cutout=self.args['cutout'], preprocess={'method':'percentile','values':[5,99.5]}, mask_file=self.args['mask_path'], dsfactor=ds_factor, add_margin=add_margin, depth=.9)          
+            try:
+                output_arr = create_tensor(fpath=out_path, arr_shape=input_arr.shape, dtype='uint8', chunk_shape=[1, 1, 64, 64, 64], driver='zarr3', codecs={"name": "blosc", "configuration": {"cname": "lz4", "clevel": 4}}, sharded=True, kvstore=kvstore_out, shard_factor=shard_factor)
+                                        
+            except:
+                output_arr = open_tensor(out_path, bytes_limit= 100_000_000, driver='zarr', kvstore=kvstore_out)  
                 
-            except Exception as e:
-                print("Error creating tensorstore array:", e)
+                                                                                                                                                   
+            adjust_contrast_gunpowder(input_arr, output_arr, iter_size=iter_size, batch_size=batch_size, cutout=self.args['cutout'], preprocess={'method':'percentile','values':[5,99.5]}, mask_file=self.args['mask_path'], dsfactor=ds_factor, add_margin=add_margin, depth=.9)          
+                
                            
 
 
