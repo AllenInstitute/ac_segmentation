@@ -10,6 +10,21 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 from cloudvolume import Skeleton
 import json
+import navis
+import numpy as np
+import glob
+import navis
+
+
+
+def kimi_to_navis(skels):
+    out_sk = navis.NeuronList(None)
+    try:
+        for sk in skels:
+            out_sk.append(navis.NeuronList(sk.to_swc()))
+    except:
+        out_sk.append(navis.NeuronList(skels.to_swc()))
+    return out_sk
 
 
 def write_single_shard(shard_skeleton_items, output_dir):
@@ -32,9 +47,9 @@ def write_single_shard(shard_skeleton_items, output_dir):
     shard_xmax = shard_ymax = shard_zmax = -np.inf
 
     # Allocate arrays for offsets and index
-    vert_offsets = np.zeros((n_skel, 2), dtype=np.uint64)  # start, count
-    edge_offsets = np.zeros((n_skel, 2), dtype=np.uint64)
-    segids = np.zeros(n_skel, dtype=np.uint64)
+    vert_offsets = np.zeros((n_skel, 2), dtype=np.int64)  # start, count
+    edge_offsets = np.zeros((n_skel, 2), dtype=np.int64)
+    segids = np.zeros(n_skel, dtype=np.int64)
     index_ds = np.zeros((n_skel, 8), dtype=np.float32)
 
     # Helper to cap chunks to dataset size
@@ -95,10 +110,10 @@ def write_single_shard(shard_skeleton_items, output_dir):
             edge_cursor += ne
 
         # Save offsets & index
-        f.create_dataset("vert_offsets", data=vert_offsets, dtype="uint64")
+        f.create_dataset("vert_offsets", data=vert_offsets, dtype="int64")
         f.create_dataset("edge_offsets", data=edge_offsets, dtype="uint64")
         f.create_dataset("index", data=index_ds, dtype="float32")
-        f.create_dataset("segids", data=segids, dtype="uint64")
+        f.create_dataset("segids", data=segids, dtype="int64")
 
     # Build mapping for this shard
     id_to_shard = {int(segid): shard_name for segid in shard_dict.keys()}
@@ -131,7 +146,7 @@ def read_shard(shard_full_path, segid_filter=None, bbox=None):
         types_ds = f["types"]
 
         # ---- Vectorized filtering ----
-        valid_mask = segids >= 0
+        valid_mask = segids > 0
         if segid_filter is not None:
             valid_mask &= np.isin(segids, list(segid_filter))
 
@@ -263,7 +278,7 @@ def save_id_to_shard_h5(id_to_shard, output_path):
     shard_paths = sorted(set(id_to_shard.values()))
     shard_to_idx = {p: i for i, p in enumerate(shard_paths)}
 
-    segids = np.array(list(id_to_shard.keys()), dtype=np.uint64)
+    segids = np.array(list(id_to_shard.keys()), dtype=np.int64)
     shard_indices = np.array([shard_to_idx[id_to_shard[k]] for k in segids], dtype=np.uint32)
 
     with h5py.File(output_path, "w") as f:
@@ -428,14 +443,16 @@ def query_skeletons_by_bb(query_bbox, shard_dir, n_workers=1):
 
     return all_skeletons, shard_to_ids
 
+
+
+
 def _read_matching_ids_from_shard(args):
     shard_dir, shard_name, segids = args
     shard_path = os.path.join(shard_dir, shard_name)
     segids = set(segids)
 
     with h5py.File(shard_path, "r") as f:
-        index_ds = f["index"]
-        segid_col = index_ds[:, 0].astype(int)
+        segid_col = f["segids"][:]
 
         mask = np.isin(segid_col, list(segids))
         idxs = np.where(mask)[0]
@@ -443,17 +460,17 @@ def _read_matching_ids_from_shard(args):
         if len(idxs) == 0:
             return shard_name, []
 
-        verts_ds = f["vertices"]
-        edges_ds = f["edges"]
-        rad_ds   = f["radius"]
-        types_ds = f["types"]
+        verts_ds    = f["vertices"]
+        edges_ds    = f["edges"]
+        rad_ds      = f["radius"]
+        types_ds    = f["types"]
         vert_offsets = f["vert_offsets"][:]
         edge_offsets = f["edge_offsets"][:]
 
         skels = []
         for i in idxs:
-            segid = segid_col[i]
-            if segid < 0:
+            segid = int(segid_col[i])
+            if segid <= 0:
                 continue
 
             skel = Skeleton()
@@ -462,15 +479,31 @@ def _read_matching_ids_from_shard(args):
             v_start, nv = vert_offsets[i]
             e_start, ne = edge_offsets[i]
 
-            skel.vertices = verts_ds[v_start:v_start+nv]
-            skel.edges = edges_ds[e_start:e_start+ne]
-            skel.radius = rad_ds[v_start:v_start+nv]
+            skel.vertices    = verts_ds[v_start:v_start+nv]
+            skel.edges       = edges_ds[e_start:e_start+ne]
+            skel.radius      = rad_ds[v_start:v_start+nv]
             skel.vertex_types = types_ds[v_start:v_start+nv]
 
             skels.append(skel)
 
         return shard_name, skels
 
+
+def delete_skeletons_in_shard(shard_path, skeleton_ids_set):
+    with h5py.File(shard_path, "r+") as f:
+        # FIX: read from int64 segids dataset, not float32 index[:,0]
+        segids_ds = f["segids"]
+        segid_col = segids_ds[:]  # int64 numpy array
+
+        mask = np.isin(segid_col, list(skeleton_ids_set))
+        indices_to_delete = np.where(mask)[0]
+
+        if len(indices_to_delete) == 0:
+            return None
+
+        # Mark as deleted in both datasets
+        segids_ds[indices_to_delete] = 0           # FIX: segids is now a numpy array/dataset
+        f["index"][indices_to_delete, 0] = 0       # also zero out index for consistency
 
 
 def query_skeletons_by_id(segids, shard_dir, n_workers=1):
@@ -514,21 +547,6 @@ def query_skeletons_by_id(segids, shard_dir, n_workers=1):
 
 
 
-def delete_skeletons_in_shard(shard_path, skeleton_ids_set):
-    """
-    Load a shard and mark specified skeleton IDs as deleted.
-    """
-    with h5py.File(shard_path, "r+") as f:
-        index_ds = f["index"]
-        segids = index_ds[:, 0].astype(int)
-        mask = np.isin(segids, list(skeleton_ids_set))
-        indices_to_delete = np.where(mask)[0]
-        if len(indices_to_delete) == 0:
-            return None  # No matching skeletons
-        
-        # Mark as deleted
-        index_ds[indices_to_delete, 0] = -1
-        # Optionally, zero out associated datasets here
 
 def delete_skeletons_parallel(shard_dir, skeleton_ids, n_workers=4):
     """
