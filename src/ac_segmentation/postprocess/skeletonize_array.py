@@ -25,10 +25,11 @@ import uuid
 from cloudvolume import CloudVolume, Skeleton, paths
 from pathlib import Path
      
-from ac_segmentation.utils.h5_skeletons import *
-from ac_segmentation.utils.h5_reconnect import *
+from h5_skeletons import *
+from h5_reconnect import *
+
 from ac_segmentation.utils.tensorstore import open_tensor, create_kvstore, AWS_Parameters
-from ac_segmentation.utils.io import write_kimi_skels_tar
+from ac_segmentation.utils.io import write_cv_skels_tar
 
 
 
@@ -60,7 +61,7 @@ def skeletonize(out_arr, probability_threshold=0.2, label_size_threshold=50, sca
             "soma_detection_threshold": 750, # physical units
             "soma_invalidation_const": 300, # physical units
             "soma_invalidation_scale": 2,
-            "max_paths": max_paths, # default None
+            "max_paths": None, # default None
         },
         dust_threshold=dust_threshold, # skip connected components with fewer than this many voxels
         anisotropy=(1,1,1), # default True #influences the dimension scale
@@ -76,7 +77,10 @@ def skeletonize(out_arr, probability_threshold=0.2, label_size_threshold=50, sca
     return skels
 
 
+# In[3]:
 
+
+###NEW EDIT
 def kimi_to_navis(skels, tag=None):
     out_sk = navis.NeuronList(None)
     try:
@@ -91,6 +95,10 @@ def kimi_to_navis(skels, tag=None):
     return out_sk
 
 
+# In[4]:
+
+
+###Edited
 def create_chunked_dims(arr_shape, chunk_size, overlap=0):
     # Ensure chunk_size is appropriate for the arr_shape length
     if len(arr_shape) != len(chunk_size):
@@ -116,6 +124,77 @@ def create_chunked_dims(arr_shape, chunk_size, overlap=0):
         comb2.append((ex, ey, ez))
         
     return comb1,comb2
+
+
+def break_branches(skeletons, min_nodes=4):
+    """
+    Break skeletons at branches.
+    
+    skeletons: list or dict of Skeleton objects (must have .vertices, .edges, .components(), .remove_disconnected_vertices())
+    min_nodes: minimum number of vertices for a fragment to be kept
+    """
+    if isinstance(skeletons, list):        
+        skeletons = {item.id: item for item in skeletons}
+    
+    max_id = max(skeletons.keys())
+    new_skels = {}
+    split_num = 0
+
+    for sk_id in skeletons.keys():
+        sk = skeletons[sk_id]
+        branch_nodes = list(sk.branches())
+
+        if branch_nodes:
+            # remove edges connected to branch nodes
+            connected = sk.edges[np.isin(sk.edges, branch_nodes).any(1)]
+            pre, post = [], []
+            for x, y in connected:
+                if x in branch_nodes:
+                    pre.append(list(sk.vertices[y]))
+                    post.append(list(sk.vertices[x]))
+                else:
+                    pre.append(list(sk.vertices[x]))
+                    post.append(list(sk.vertices[y]))
+
+            pre = np.array(pre)
+            post = np.array(post)
+
+            sk.edges = sk.edges[~np.isin(sk.edges, branch_nodes).any(1)]
+            sk = sk.remove_disconnected_vertices()
+
+            # get connected components
+            if len(sk.vertices) >0:
+                split_skels = sk.components()
+                # sort by size descending to ensure largest fragment is first
+                split_skels = sorted(split_skels, key=lambda s: len(s.vertices), reverse=True)
+    
+                for ind, split in enumerate(split_skels):
+                    if len(split.vertices) >= min_nodes:
+                        if ind == 0:
+                            # largest fragment keeps original ID
+                            split.id = sk_id
+                            split.parent_id = sk_id
+                            new_skels[sk_id] = split
+                        else:
+                            # new ID for smaller fragments
+                            max_id += 1
+                            split.id = max_id
+                            split.parent_id = sk_id
+                            new_skels[max_id] = split
+                        split_num += 1
+    
+                        # update vertices positions based on branch adjustments
+                        #for idx, vert in enumerate(split.vertices):
+                            #a = np.all(pre == vert, axis=1)
+                            #true_idx = np.where(a)[0]
+                            #if len(true_idx) > 0:
+                                #split.vertices[idx] = ((post[true_idx] * 0.8) + (split.vertices[idx] * 0.2))
+        else:
+            # skeleton with no branches is unchanged
+            sk.parent_id = sk_id
+            new_skels[sk_id] = sk
+
+    return new_skels
 
 
 def TS_skeletonize_volume(seg_arr, chunk_size=[1000, 1000, 1000], cutout=None, n_jobs=4, prob_thresh=0.2, label_size_threshold=20, overlap=4):
@@ -172,15 +251,17 @@ def TS_skeletonize_volume(seg_arr, chunk_size=[1000, 1000, 1000], cutout=None, n
 
 
 
+
 class SkeletonizeProbabilitiesParameters(argschema.ArgSchema):
     input_path = argschema.fields.String(required=True)
     skeleton_output = argschema.fields.String(required=True)
     probability_threshold = argschema.fields.Float(
-        required=False, default=0.05)
+        required=False, default=20)
     label_size_threshold = argschema.fields.Int(required=False, default=80)
     n_jobs = argschema.fields.Int(required=False, default=15)
     cutout = argschema.fields.String(required=False, default=None, allow_none=True)
     output_json = argschema.fields.OutputFile(required=False, allow_none=True)
+    skel_h5 = argschema.fields.Boolean(required=False, dump_default=True)
     
     AWS_key = argschema.fields.String(required=False, default=None, allow_none=True)
     AWS_sec_key = argschema.fields.String(required=False, default=None, allow_none=True)
@@ -221,12 +302,13 @@ class SkeletonizeProbabilitiesModule(argschema.ArgSchemaParser):
             self.args["cutout"] = [int(s.replace("'", "")) for s in self.args["cutout"].split(',')]                          
             
         skels = TS_skeletonize_volume(input_arr, chunk_size=[100,100,100], n_jobs=self.args["n_jobs"], prob_thresh=self.args["probability_threshold"], label_size_threshold=self.args["label_size_threshold"], overlap=4, cutout=self.args["cutout"])      
-        skels = [x for x in skels if x is not None]          
-        for ind in range(len(skels)):
-            skels[ind].id = int(uuid.uuid4().int % 1e14)  
-        print("Completed skeletonization, # of skels", len(skels))          
+        skels = [x for x in skels if x is not None]
         
-        if len(skels) > 0:              
+        if len(skels) > 0 :       
+            for ind in range(len(skels)):
+                skels[ind].id = int(uuid.uuid4().int % 1e14)  
+            print("Completed skeletonization, # of skels", len(skels))              
+            
             #break branches
             skels = list(break_branches(skels).values())
                                                                                                                        
@@ -241,23 +323,22 @@ class SkeletonizeProbabilitiesModule(argschema.ArgSchemaParser):
                 if len(fused[ind].vertices) < 10:
                      fused[ind] = None                 
             fused = [x for x in fused if x]
-                                                   
+            
+                                                  
             #write raw swc       
             last_2 = Path(*Path(self.args["input_path"]).parents[0].parts[-2:])
             os.makedirs(os.path.join(self.args["skeleton_output"], last_2), exist_ok=True)        
             skels_outpath = os.path.join(self.args["skeleton_output"], last_2, base)                                    
-            #write_kimi_skels_tar(str(skels_outpath), fused, mode='w:gz')
+            write_cv_skels_tar(str(skels_outpath), fused, mode='w:gz')
                      
             #write h5
-            out_skels_dic = {}
-            for i in fused:     
-                out_skels_dic[i.id] = i
-            global_index = shard_and_write_skeletons(out_skels_dic , os.path.join(self.args["skeleton_output"], last_2, "skeleton_shards"), max_skeletons_per_shard=10000, n_workers=10, label=str(self.args["cutout"]))
-            
-        else:
-            print("No skeletons found in volume")
-            
+            if self.args["skel_h5"]: 
+                out_skels_dic = {}
+                for i in fused:     
+                    out_skels_dic[i.id] = i
+                global_index = shard_and_write_skeletons(out_skels_dic , os.path.join(self.args["skeleton_output"], last_2, "skeleton_shards"), max_skeletons_per_shard=10000, n_workers=10, label=str(self.args["cutout"]))
                 
+            
 
 if __name__ == "__main__":
     mod = SkeletonizeProbabilitiesModule()

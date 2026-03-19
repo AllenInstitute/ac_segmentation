@@ -57,7 +57,7 @@ def run(weights_file, input_zarr, probability_output_path,
     )
 
     # write skeletons to swc zip
-    # write_kimi_skels_tar(skeleton_output_path, skels)
+    # write_cv_skels_tar(skeleton_output_path, skels)
     write_cv_skels_iter_tar(skeleton_output_path, skels)
 
 
