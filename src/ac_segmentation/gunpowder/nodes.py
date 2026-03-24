@@ -370,32 +370,33 @@ class ApplyModel(gp.BatchFilter):
                 return
     
         input_data = batch[self.input_key].data
-
-        tx,ty,tz = tuple((x // 16) * 16 for x in input_data.shape[2:])
-        input_data = input_data[:,:,:tx,:ty,:tz]
-
-        # CHECK THISSSSS!! 
-        if input_data.dtype != np.int16:
-            input_data = input_data.astype(np.int16)
-        if len(input_data.shape)<5:
-            x,y,z = input_data.shape
-            input_data = input_data.reshape(1, 1, x, y, z)
-
-        # Convert input data to a tensor
-        input_tensor = torch.from_numpy(input_data).float().to(self.device)
-
-        # Run the model
-        with torch.inference_mode():
-            output_tensor = self.model(input_tensor)
-
-        # Convert output tensor to probability map
-        output_data = output_tensor[0].data.cpu()
-        output_data = torch.special.expit(output_data).numpy()
         
-        if np.isneginf(output_data).any():
-            output_data[output_data == -np.inf] = 0
+        if np.any(input_data):
+            tx,ty,tz = tuple((x // 16) * 16 for x in input_data.shape[2:])
+            input_data = input_data[:,:,:tx,:ty,:tz]
+    
+            if input_data.dtype != np.int16:
+                input_data = input_data.astype(np.int16)
+            if len(input_data.shape)<5:
+                x,y,z = input_data.shape
+                input_data = input_data.reshape(1, 1, x, y, z)
+    
+            # Convert input data to a tensor
+            input_tensor = torch.from_numpy(input_data).float().to(self.device)
+    
+            # Run the model
+            with torch.inference_mode():
+                output_tensor = self.model(input_tensor)
+    
+            # Convert output tensor to probability map
+            output_data = output_tensor[0].data.cpu()
+            output_data = torch.special.expit(output_data).numpy()
             
-        self.write_objects.append([[x1,x1+tx,y1,y1+ty,z1,z1+tz], output_data])
+            if np.isneginf(output_data).any():
+                output_data[output_data == -np.inf] = 0
+                
+            self.write_objects.append([[x1,x1+tx,y1,y1+ty,z1,z1+tz], output_data])
+
         
     def get_write_objects(self):
         return self.write_objects
