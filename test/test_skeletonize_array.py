@@ -1,5 +1,5 @@
 import os
-from ac_segmentation.postprocess.skeletonize_array_uint8_prob import run
+from ac_segmentation.postprocess.skeletonize_array import run
 
 
 def test_seg_skel_uint8(npy_file):
