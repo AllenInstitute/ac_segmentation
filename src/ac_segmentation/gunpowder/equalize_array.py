@@ -1,6 +1,7 @@
 from ac_segmentation.gunpowder.nodes import TensorStoreSource, ContrastAdjustWrite, perimeter_weighted_blend
 from ac_segmentation.utils.preprocess import create_chunked_dims, create_overlap_chunks
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
+from ac_segmentation.gunpowder.bump_mask import *
 
 import gunpowder as gp
 import os

@@ -30,7 +30,7 @@ import tensorstore as ts
 
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
 from ac_segmentation.utils.preprocess import lut_preprocess_array_minmax
-from bump_mask import make_mask
+from ac_segmentation.gunpowder.bump_mask import *
 
     
 

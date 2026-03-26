@@ -2,7 +2,7 @@ import ac_segmentation.neurotorch.nets.RSUNet
 from ac_segmentation.gunpowder.nodes import TensorStoreSource, ApplyModel, ContrastAdjust
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
 from ac_segmentation.utils.preprocess import create_chunked_dims, create_overlap_chunks
-from bump_mask import *
+from ac_segmentation.gunpowder.bump_mask import *
 
 
 import tensorstore as ts
