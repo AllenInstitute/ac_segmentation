@@ -25,11 +25,10 @@ import uuid
 from cloudvolume import CloudVolume, Skeleton, paths
 from pathlib import Path
      
-from h5_skeletons import *
-from h5_reconnect import *
-
 from ac_segmentation.utils.tensorstore import open_tensor, create_kvstore, AWS_Parameters
 from ac_segmentation.utils.io import write_cv_skels_tar
+from ac_segmentation.utils.h5_skeletons import *
+from ac_segmentation.utils.h5_reconnect import *
 
 
 
