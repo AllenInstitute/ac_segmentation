@@ -44,11 +44,6 @@ platforms = ["linux-64"]
 [tool.pixi.pypi-dependencies]
 ac_segmentation = { path = ".", editable = true }
 
-# version-specific python features
-[tool.pixi.feature.py39.dependencies]
-python = "3.9.*"
-gcc = "*"
-numpy = "==1.26.0"
 
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
@@ -60,9 +55,7 @@ scalene = "*"
 
 [tool.pixi.environments]
 default = ["py310"] 
-py39-conda-scalene = ["scalene", "py39","segment"]
 py310-conda-scalene = ["scalene", "py310", "segment"]
-py39-conda-test = ["py39","test"]
 py310-conda-test = ["py310", "test"]
 
 [tool.coverage.run]

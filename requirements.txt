@@ -23,6 +23,7 @@ docker
 cloud-volume==10.1.0
 jsonschema==4.18.0
 fastremap
+scikit-image
 requests
 augment-nd>=0.1.3
 tqdm
