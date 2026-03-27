@@ -14,6 +14,7 @@ matches = ['init','neurotorch','test']
 submods = get_submod(path, '*.py')
 
 submods = [x for x in submods if 'dep' not in x]
+submods = [x for x in submods if 'gun' not in x]
 
 submods = [x.split('src/')[1].replace('/','.').replace('.py','') for x in submods]
 submods = [ x for x in submods if any(y in x for y in matches)==False]

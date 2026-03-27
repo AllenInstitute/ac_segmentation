@@ -1,12 +1,11 @@
 import ac_segmentation.neurotorch.nets.RSUNet
-from ac_segmentation.gunpowder.nodes import TensorStoreSource, ApplyModel, ContrastAdjust
+from ac_segmentation.methods.nodes import TensorStoreSource, ApplyModel, ContrastAdjust
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
 from ac_segmentation.utils.preprocess import create_chunked_dims, create_overlap_chunks
-from ac_segmentation.gunpowder.bump_mask import *
+from ac_segmentation.methods.bump_mask import *
 
 
 import tensorstore as ts
-import gunpowder as gp
 import torch
 import os
 import numpy as np
@@ -18,6 +17,15 @@ import torch
 import ast
 
 
+from ac_segmentation.gunpowder.array_spec import ArraySpec
+from ac_segmentation.gunpowder.array import ArrayKey
+from ac_segmentation.gunpowder.coordinate import Coordinate
+from ac_segmentation.gunpowder.batch_request import BatchRequest
+from ac_segmentation.gunpowder.roi import Roi
+from ac_segmentation.gunpowder.build import build
+from ac_segmentation.gunpowder.nodes.scan import Scan
+
+
 
 RSUNet = ac_segmentation.neurotorch.nets.RSUNet.RSUNet
 
@@ -27,13 +35,13 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
     if mask_file:
         mask = open_tensor(fpath=mask_file).read().result()
 
-    raw = gp.ArrayKey('RAW')
+    raw = ArrayKey('RAW')
     source = TensorStoreSource(
         {
             raw: input_arr
         },
         {
-            raw: gp.ArraySpec(interpolatable=True),
+            raw: ArraySpec(interpolatable=True),
         }, add_margin=add_margin)
 
     
@@ -54,12 +62,12 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
         iter_size = (1,1,) + iter_size
         start_req = (0,0,0,0,0)
     chunk_size = batch_size*(np.array(iter_size))
-    iter_coord = gp.Coordinate(iter_size)
+    iter_coord = Coordinate(iter_size)
 
     # Define the scan request with overlap
-    scan_request = gp.BatchRequest()
-    scan_request[raw] = gp.Roi(start_req, iter_coord)
-    scan = gp.Scan(scan_request, num_workers=0)
+    scan_request = BatchRequest()
+    scan_request[raw] = Roi(start_req, iter_coord)
+    scan = Scan(scan_request, num_workers=0)
 
     if add_margin:
         iter_size = tuple(np.array(iter_size) + add_margin)
@@ -108,14 +116,14 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
     weight_map = make_mask(iter_size[-3:], tuple(int(t*0.5) for t in iter_size[-3:]), edge=None, bump='zung')  
 
     #run pipeline    
-    with gp.build(pipeline):
+    with build(pipeline):
         for ind,i in enumerate(range(len(start))):
             print(start[i], end[i])
             arr = np.array(end[i])-np.array(start[i])
-            total_roi = gp.Roi(start[i], arr)
+            total_roi = Roi(start[i], arr)
     
             # Create a request for volume
-            request = gp.BatchRequest()
+            request = BatchRequest()
             request[raw] = total_roi
             
             # Request the batch

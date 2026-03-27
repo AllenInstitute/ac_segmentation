@@ -14,12 +14,20 @@ import torch
 import os
 from datetime import datetime
 import tensorstore as ts
-import gunpowder as gp
 import itertools
 import argschema
 import json
 import time
-from ac_segmentation.gunpowder.nodes import TensorStoreSource, Fuse, total_volume_shape
+from ac_segmentation.methods.nodes import TensorStoreSource, Fuse, total_volume_shape
+
+
+from ac_segmentation.gunpowder.array_spec import ArraySpec
+from ac_segmentation.gunpowder.array import ArrayKey
+from ac_segmentation.gunpowder.coordinate import Coordinate
+from ac_segmentation.gunpowder.batch_request import BatchRequest
+from ac_segmentation.gunpowder.roi import Roi
+from ac_segmentation.gunpowder.build import build
+from ac_segmentation.gunpowder.nodes.scan import Scan
 
 
 
@@ -149,7 +157,7 @@ def fuse_gunpowder(arrs, translations, output_path, flatten={'surface_maps':None
             print("Processing {0} blocks".format(len(start)))
     
             # Define ArrayKeys
-            raw = gp.ArrayKey('RAW')
+            raw = ArrayKey('RAW')
             
             #create tensorstore arrays
             dtype = A.dtype.name
@@ -160,16 +168,16 @@ def fuse_gunpowder(arrs, translations, output_path, flatten={'surface_maps':None
                     raw: A
                 },
                 {
-                    raw: gp.ArraySpec(interpolatable=True)
+                    raw: ArraySpec(interpolatable=True)
                 })
             
                                                                                   
-            iter_coord = gp.Coordinate(iter_size)
+            iter_coord = Coordinate(iter_size)
             
             # Define the scan request with overlap
-            scan_request = gp.BatchRequest()
-            scan_request[raw] = gp.Roi(start_req, iter_coord)
-            scan = gp.Scan(scan_request) 
+            scan_request = BatchRequest()
+            scan_request[raw] = Roi(start_req, iter_coord)
+            scan = Scan(scan_request) 
             
             
             # Create the fuse node
@@ -182,15 +190,15 @@ def fuse_gunpowder(arrs, translations, output_path, flatten={'surface_maps':None
                 scan)
                     
                 
-            with gp.build(pipeline):
+            with build(pipeline):
                 stime = datetime.now()
              
                 for i in range(len(start)):
                     arr = np.array(end[i])-np.array(start[i])
-                    total_roi = gp.Roi(np.array(start[i]), arr)
+                    total_roi = Roi(np.array(start[i]), arr)
             
                     # Create a request for the entire volume
-                    request = gp.BatchRequest()
+                    request = BatchRequest()
                     request[raw] = total_roi
                     
                     # Request the batch

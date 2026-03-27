@@ -1,15 +1,6 @@
 # Add cutout capability
 import matplotlib.pyplot as plt
 
-import gunpowder as gp
-from gunpowder.ext import ZarrFile
-from gunpowder.batch import Batch
-from gunpowder.coordinate import Coordinate
-from gunpowder.profiling import Timing
-from gunpowder.roi import Roi
-from gunpowder.array import Array
-from gunpowder.array_spec import ArraySpec
-from gunpowder.provider_spec import ProviderSpec
 
 #from zarr._storage.store import BaseStore
 #from zarr import N5Store, N5FSStore
@@ -30,13 +21,29 @@ import tensorstore as ts
 
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
 from ac_segmentation.utils.preprocess import lut_preprocess_array_minmax
-from ac_segmentation.gunpowder.bump_mask import *
+from ac_segmentation.methods.bump_mask import *
+
+
+from ac_segmentation.gunpowder.array_spec import ArraySpec
+from ac_segmentation.gunpowder.array import ArrayKey
+from ac_segmentation.gunpowder.coordinate import Coordinate
+from ac_segmentation.gunpowder.batch_request import BatchRequest
+from ac_segmentation.gunpowder.roi import Roi
+from ac_segmentation.gunpowder.build import build
+from ac_segmentation.gunpowder.nodes.scan import Scan
+from ac_segmentation.gunpowder.ext import ZarrFile
+from ac_segmentation.gunpowder.batch import Batch
+from ac_segmentation.gunpowder.profiling import Timing
+from ac_segmentation.gunpowder.array import Array
+from ac_segmentation.gunpowder.provider_spec import ProviderSpec
+from ac_segmentation.gunpowder.nodes.zarr_source import ZarrSource
+from ac_segmentation.gunpowder.nodes.batch_filter import BatchFilter
 
     
 
 logger = logging.getLogger(__name__)
 
-class TensorStoreSource(gp.ZarrSource):
+class TensorStoreSource(ZarrSource):
 
     def __init__(self, tensorstore=None, array_specs=None, channels_first=True, add_margin=None):
         if array_specs is None:
@@ -206,7 +213,7 @@ class TensorStoreSource(gp.ZarrSource):
 
         
         
-class ContrastAdjustWrite(gp.BatchFilter):
+class ContrastAdjustWrite(BatchFilter):
     def __init__(self, input_key, output_key, input_arr, output_arr, int_range=None, version='range', mask=None, dsfactor=1, add_margin=None, depth=.9):
         self.input_key = input_key
         self.output_key = output_key
@@ -224,7 +231,7 @@ class ContrastAdjustWrite(gp.BatchFilter):
         pass
 
     def prepare(self, request):
-        deps = gp.BatchRequest()
+        deps = BatchRequest()
         deps[self.input_key] = request[self.output_key].copy()
         return deps
 
@@ -286,7 +293,7 @@ class ContrastAdjustWrite(gp.BatchFilter):
 
 
 
-class ContrastAdjust(gp.BatchFilter):
+class ContrastAdjust(BatchFilter):
     def __init__(self, input_key, output_key, int_range=None, version='range'):
         self.input_key = input_key
         self.output_key = output_key
@@ -298,7 +305,7 @@ class ContrastAdjust(gp.BatchFilter):
 
     def prepare(self, request):
         # Ensure the input array is requested
-        deps = gp.BatchRequest()
+        deps = BatchRequest()
         deps[self.input_key] = request[self.output_key].copy()
         return deps
 
@@ -323,16 +330,16 @@ class ContrastAdjust(gp.BatchFilter):
         spec.roi = request[self.output_key].roi.copy()
 
         # Create a new array
-        adjusted_array = gp.Array(adjusted_data, spec)
+        adjusted_array = Array(adjusted_data, spec)
 
         # Store it in the batch
-        batch = gp.Batch()
+        batch = Batch()
         batch[self.output_key] = adjusted_array
         
         return batch
 
 
-class ApplyModel(gp.BatchFilter):
+class ApplyModel(BatchFilter):
     def __init__(self, model, input_key, ts_array, device, mask=None, dsfactor=1, add_margin=None):
         self.model = model
         self.input_key = input_key
@@ -405,7 +412,7 @@ class ApplyModel(gp.BatchFilter):
         self.write_objects = []
         
  
-class Fuse(gp.BatchFilter):
+class Fuse(BatchFilter):
     def __init__(self, input_key, out_arr, x0_adj, y0_adj, z0_adj, flatten):
         self.input_key = input_key
         self.write_objects = []

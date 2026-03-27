@@ -1,6 +1,6 @@
 import os
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
-from ac_segmentation.postprocess.skeletonize_array import TS_skeletonize_volume
+from ac_segmentation.methods.skeletonize_array import TS_skeletonize_volume
 
 
 def test_skel(zarr_file):

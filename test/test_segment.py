@@ -2,7 +2,7 @@ import pytest
 import os
 import glob
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
-from ac_segmentation.gunpowder.segment_array import segment_gunpowder
+from ac_segmentation.methods.segment_array import segment_gunpowder
 
 
 def test_seg(zarr_file):

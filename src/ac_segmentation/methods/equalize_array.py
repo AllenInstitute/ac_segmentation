@@ -1,15 +1,22 @@
-from ac_segmentation.gunpowder.nodes import TensorStoreSource, ContrastAdjustWrite, perimeter_weighted_blend
+from ac_segmentation.methods.nodes import TensorStoreSource, ContrastAdjustWrite, perimeter_weighted_blend
 from ac_segmentation.utils.preprocess import create_chunked_dims, create_overlap_chunks
 from ac_segmentation.utils.tensorstore import open_tensor, AWS_Parameters, create_kvstore, create_tensor
-from ac_segmentation.gunpowder.bump_mask import *
+from ac_segmentation.methods.bump_mask import *
 
-import gunpowder as gp
 import os
 import numpy as np
 from datetime import datetime
 import json
 import time
 import argschema
+
+from ac_segmentation.gunpowder.array_spec import ArraySpec
+from ac_segmentation.gunpowder.array import ArrayKey
+from ac_segmentation.gunpowder.coordinate import Coordinate
+from ac_segmentation.gunpowder.batch_request import BatchRequest
+from ac_segmentation.gunpowder.roi import Roi
+from ac_segmentation.gunpowder.build import build
+from ac_segmentation.gunpowder.nodes.scan import Scan
 
 
 def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch_size=3, cutout=None, mask_file=None, preprocess={'method':'percentile','values':[96,97]}, dsfactor=1, add_margin=0, depth=.7):
@@ -19,13 +26,13 @@ def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch
         mask = open_tensor(fpath=mask_file).read().result()
         print('mask', mask.shape)
     
-    raw = gp.ArrayKey('RAW')
+    raw = ArrayKey('RAW')
     source = TensorStoreSource(
         {
             raw: input_arr
         },
         {
-            raw: gp.ArraySpec(interpolatable=True)
+            raw: ArraySpec(interpolatable=True)
         }, add_margin=add_margin)
 
     
@@ -34,12 +41,12 @@ def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch
         iter_size = (1,1,) + iter_size
         start_req = (0,0,0,0,0)
     chunk_size = batch_size*(np.array(iter_size))
-    iter_coord = gp.Coordinate(iter_size)
+    iter_coord = Coordinate(iter_size)
 
     # Define the scan request with overlap
-    scan_request = gp.BatchRequest()
-    scan_request[raw] = gp.Roi(start_req, iter_coord)
-    scan = gp.Scan(scan_request, num_workers=0)
+    scan_request = BatchRequest()
+    scan_request[raw] = Roi(start_req, iter_coord)
+    scan = Scan(scan_request, num_workers=0)
     
     #create chunks
     start, end = create_chunked_dims(arr_shape=input_arr.shape, chunk_size=chunk_size)
@@ -90,14 +97,14 @@ def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch
 
     print(len(start))
 
-    with gp.build(pipeline):
+    with build(pipeline):
         for ind,i in enumerate(range(len(start))):
             print(start[i], end[i])
             arr = np.array(end[i])-np.array(start[i])
-            total_roi = gp.Roi(start[i], arr)
+            total_roi = Roi(start[i], arr)
     
             # Create a request for the entire volume
-            request = gp.BatchRequest()
+            request = BatchRequest()
             request[raw] = total_roi
             
             # Request the batch
