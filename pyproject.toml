@@ -48,9 +48,6 @@ numpy = ">=1.26,<2"
 [tool.pixi.pypi-dependencies]
 ac_segmentation = { path = ".", editable = true }
 
-[tool.pixi.feature.py39.dependencies]
-python = "3.9.*"
-gcc = "*"
 
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
@@ -76,9 +73,7 @@ test = "pytest --cov --cov-report=xml --junitxml=test-reports/test.xml"
 
 [tool.pixi.environments]
 default = { features = ["py310"], solve-group = "py310" }
-py39-conda-scalene = { features = ["scalene", "py39", "segment"], solve-group = "py39" }
 py310-conda-scalene = { features = ["scalene", "py310", "segment"], solve-group = "py310" }
-py39-conda-test = { features = ["py39", "test"], solve-group = "py39" }
 py310-conda-test = { features = ["py310", "test"], solve-group = "py310" }
 
 [tool.coverage.run]
