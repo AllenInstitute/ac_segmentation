@@ -498,6 +498,63 @@ class Fuse(BatchFilter):
         
         
 
+class VoxelRelabel(BatchFilter):
+    def __init__(self, input_key, output_key, input_arr, output_arr, skels):
+        self.input_key = input_key
+        self.output_key = output_key
+        self.out_array = output_arr
+        self.in_array = input_arr
+        self.write_objects = []
+        self.skels = skels
+
+
+    def setup(self):
+        pass
+
+    def prepare(self, request):
+        deps = BatchRequest()
+        deps[self.input_key] = request[self.output_key].copy()
+        return deps
+
+    def process(self, batch, request):
+        roi = batch.arrays[self.input_key].spec.roi
+        slices = roi.to_slices()
+
+        start = [s.start for s in slices]
+        end = [s.stop for s in slices]
+        _,_,x1, y1, z1 = start
+        _,_,x2, y2, z2 = end
+        
+        input_data = batch[self.input_key].data
+        
+        
+        
+        if len(filter_skeletons(self.skels,[x1,x2,y1,y2,z1,z2])) > 0:     
+            if np.any(input_data) == True:
+                if len(self.in_array.shape) ==5:
+                    input_data = input_data[0,0,:,:,:]
+    
+                input_data = input_data.astype('uint64')
+                binary_arr = threshold_binarize_array(input_data, threshold=15) ####TO DO, ADD PARAMETER TO CHOOSE
+                labeled_vol, num_feat = label_binary_array(binary_arr, size_threshold=10) ####TO DO, ADD PARAMETER TO CHOOSE                       
+                output_data = relabel_volume_by_nearest_skeleton(labeled_vol=labeled_vol, skeletons=self.skels, offset=(x1, y1, z1))
+                         
+                if len(self.in_array.shape) ==5:
+                    try:
+                        self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
+                    except:
+                        pass
+                else:
+                    self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
+
+    def get_write_objects(self):
+        return self.write_objects
+
+    def clear_write_objects(self):
+        self.write_objects = []
+
+          
+
 
 def total_volume_shape(arrs, translations):
     mins = []
@@ -518,5 +575,79 @@ def no_neg(value):
 def perimeter_weighted_blend(array1, array2, depth=.5):
     weight_map = make_mask(array1.shape[-3:], tuple(int(t*0.5) for t in array1.shape[-3:]), edge=None, bump='zung')
     return (array1 * (1 - weight_map) + array2 * (weight_map))
+    
+ 
+###relabel function  
+    
+def label_binary_array(binary_arr, size_threshold=20):
+    
+    labeled_arr, num_features = cc3d.connected_components(binary_arr, connectivity=6, return_N=True)
+    if num_features > 1:
+        labeled_arr = skimage.morphology.remove_small_objects(
+            labeled_arr, min_size=size_threshold, connectivity=3, out=labeled_arr)
+        
+    return labeled_arr, len(np.unique(labeled_arr))
+
+def threshold_binarize_array(arr, threshold=0.2):
+    return (arr >= threshold)
+
+
+def relabel_volume_by_nearest_skeleton(labeled_vol, skeletons, offset=(0, 0, 0)):
+    pts = []
+    ids = []
+    for sk in skeletons:
+        verts = list(sk.vertices)
+        pts += verts
+        ids += [sk.id] * len(verts)
+    pts = np.asarray(pts, dtype=np.float64)  
+    ids = np.asarray(ids)                   
+
+    offset = np.asarray(offset, dtype=np.float64)
+
+    # find which CC labels are hit by a skeleton vertex
+    pts_relative = np.round(pts - offset).astype(int)
+    shape = np.array(labeled_vol.shape)
+    valid = np.all((pts_relative >= 0) & (pts_relative < shape), axis=1)
+    pts_rel_valid = pts_relative[valid]
+    xi_s, yi_s, zi_s = pts_rel_valid[:, 0], pts_rel_valid[:, 1], pts_rel_valid[:, 2]
+    hit_labels = set(labeled_vol[xi_s, yi_s, zi_s].tolist())
+    hit_labels.discard(0)
+
+    all_labels = set(np.unique(labeled_vol).tolist())
+    all_labels.discard(0)
+
+    # only process voxels in hit components
+    xi, yi, zi = np.nonzero(labeled_vol > 0)
+    cc_labels = labeled_vol[xi, yi, zi]
+    in_hit_component = np.isin(cc_labels, list(hit_labels))
+    xi, yi, zi = xi[in_hit_component], yi[in_hit_component], zi[in_hit_component]
+
+    vox_absolute = np.column_stack([xi, yi, zi]) + offset
+
+    tree = cKDTree(pts)
+    dist, idx = tree.query(vox_absolute)
+
+    out = np.zeros_like(labeled_vol, dtype='uint64')
+    out[xi, yi, zi] = ids[idx]
+    return out
+            
+    
+    
+def filter_skeletons(skels, bbox): #x1,x2,y1,y2,z1,z2
+    x1,x2,y1,y2,z1,z2 = bbox
+    lower = np.array([x1, y1, z1])
+    upper = np.array([x2, y2, z2])
+    
+    matches = []
+    for sk in skels:
+        verts = np.array(sk.vertices, dtype=int)  # shape (N, 3)
+        in_bounds = np.all((verts >= lower) & (verts <= upper), axis=1)
+        if in_bounds.any():
+            matches.append(sk)
+    return matches
+    
+    
+def no_neg(value):
+    return value if value >= 0 else 0
 
 
