@@ -14,9 +14,8 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-
 name = "ac_segmentation"
-version = "0.0.2"
+version = "0.0.1"
 authors = [
     {name = "Olga Gliko"},
 ]
@@ -38,17 +37,18 @@ test = [
 ignore = ['E226', 'E126', 'E741']
 max-line-length = 79
 
-[tool.pixi.project]
+[tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["linux-64"]
+
+[tool.pixi.dependencies]
+gcc = "*"
+numpy = ">=1.26,<2"
 
 [tool.pixi.pypi-dependencies]
 ac_segmentation = { path = ".", editable = true }
 
-# version-specific python features
-[tool.pixi.feature.py39.dependencies]
-python = "3.9.*"
-gcc = "*"
+
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
 gcc = "*"
@@ -56,20 +56,29 @@ gcc = "*"
 [tool.pixi.feature.scalene.dependencies]
 scalene = "*"
 
-[tool.pixi.environments]
-py39-conda-scalene = ["scalene", "py39","segment"]
-py310-conda-scalene = ["scalene", "py310", "segment"]
-py39-conda-test = ["py39","test"]
-py310-conda-test = ["py310", "test"]
-
-[tool.coverage.run]
-omit = ["test/*",]
-
-[tool.pixi.feature.test.tasks]
-test = "pytest  --cov --cov-report=xml --junitxml=test-reports/test.xml"
+[tool.pixi.feature.segment.dependencies]
+# add any segment-specific conda packages here if needed
 
 [tool.pixi.feature.segment.tasks]
 segment = "python src/ac_segmentation/process/segment_array.py"
 pytest = "pytest"
+
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+pytest-cov = "*"
+pytest-mock = "*"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest --cov --cov-report=xml --junitxml=test-reports/test.xml"
+
+[tool.pixi.environments]
+default = { features = ["py310"], solve-group = "py310" }
+py310-conda-scalene = { features = ["scalene", "py310", "segment"], solve-group = "py310" }
+py310-conda-test = { features = ["py310", "test"], solve-group = "py310" }
+
+[tool.coverage.run]
+omit = ["test/*"]
+
+
 
 

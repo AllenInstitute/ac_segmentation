@@ -1,15 +1,17 @@
 import concurrent.futures
 import gzip
 import io
-import itertools
 import tarfile
 import numpy
 import boto3
 from io import BytesIO
-import fastremap
 from ac_segmentation.utils.tensorstore import split_s3_path
-import navis
-import tensorstore as ts
+import os
+from cloudvolume import Skeleton
+import re
+import concurrent
+from concurrent.futures import ThreadPoolExecutor
+import uuid
 
 
 def gzip_array(fn, arr):
@@ -30,53 +32,70 @@ def write_cv_skels_iter_tar(tar_fn, skels):
     with tarfile.open(tar_fn, mode="w:gz") as t:
         for skid, skel in enumerate(skels):
             bio = io.BytesIO(skel.to_swc().encode())
-            info = tarfile.TarInfo(name=f"{skel.id}.swc")
+            info = tarfile.TarInfo(name=f"{skid}.swc")
             info.size = len(bio.getbuffer())
             t.addfile(tarinfo=info, fileobj=bio)
             
-            
-def write_navis_skels_tar(tar_fn, skels, mode='w:gz', swcname=False):
+    
+def write_cv_skels_tar(tar_fn, skels, mode='w:gz'):
     with tarfile.open(tar_fn, mode=mode) as t:
-        for sk in skels:
-            id = sk.id
-            if swcname:
-                id = sk.swcname
-            if 'label' not in sk.nodes:
-                sk.nodes.insert(1, 'label', list(np.zeros(len(sk.nodes))))
-            sk = sk.nodes[['node_id', 'label','x','y','z','radius','parent_id']].values.tolist()
-            sk = '\n'.join(str(x)[1:-1] for x in sk).replace(",", "")
-            bio = io.BytesIO(sk.encode())
+        id = 1
+        for skel in skels:
+            bio = BytesIO(skel.to_swc().encode())
             info = tarfile.TarInfo(name=f"{id}.swc")
             info.size = len(bio.getbuffer())
             t.addfile(tarinfo=info, fileobj=bio)
+            id += 1
             
             
-def process_swc_file(swc_data, swcname, file_id):
-    neuron = navis.io.read_swc(f=swc_data, swcname=swcname)
-    neuron.id = file_id
-    return neuron
-
-def read_navis_neurons_tar(tar_fn, concurrency=10, preprocess_func=None, uuid=True):
-    preprocess_func = ((lambda x: x) if preprocess_func is None else preprocess_func)
-    with concurrent.futures.ProcessPoolExecutor(max_workers=concurrency) as e:
-        futs = []
-        with tarfile.open(tar_fn, "r:gz") as t:
-            for m in t.getmembers():
-                # Extract the SWC file contents
-                swc_b = t.extractfile(m).read()
-                file_id = m.name.split('.')[0]
+def read_swc_cv(swc, id=0):
+    fixed_lines = []
+    for line in swc.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            fixed_lines.append(line)
+            continue
+        parts = line.split()
+        # Columns 0 (id), 1 (type), 6 (parent_id) should be ints
+        for i in [0, 1, 6]:
+            if i < len(parts):
                 try:
-                    file_id = int(file_id)
-                except:
+                    parts[i] = str(int(float(parts[i])))
+                except ValueError:
                     pass
-                if uuid:
-                    futs.append(e.submit(navis.io.read_swc,f=swc_b.decode(),swcname=file_id))
-                else:
-                    futs.append(e.submit(process_swc_file, swc_b.decode(), file_id, file_id))
-                
-        neurons = [preprocess_func(fut.result()) for fut in concurrent.futures.as_completed(futs)]
-        navis_neurons = navis.NeuronList([n for n in neurons if not n is None])
-    return navis_neurons
+        fixed_lines.append(' '.join(parts))
+    fixed_swc = '\n'.join(fixed_lines)
+    
+    skel = Skeleton.from_swc(fixed_swc)
+    skel.id = id
+    return skel
+
+def read_cv_neurons_tar(tar_fn, n_workers=10, preprocess_func=None):
+    preprocess_func = ((lambda x: x) if preprocess_func is None else preprocess_func)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as e:
+        futs = []
+        with tarfile.open(tar_fn, "r:*") as t:
+            id = 1
+            for m in t.getmembers():
+                swc_b = t.extractfile(m).read()
+                futs.append(e.submit(read_swc_cv, swc_b.decode(), id))
+                id += 1
+        cv_neurons = [preprocess_func(fut.result()) for fut in concurrent.futures.as_completed(futs)]
+    return cv_neurons
+    
+    
+def cv_to_navis(skels, tag=None):
+    out_sk = navis.NeuronList(None)
+    try:
+        for sk in skels:
+            sk = navis.TreeNeuron(sk.to_swc())
+            if tag:
+                sk.name = tag
+            out_sk.append(sk)
+    except:
+        out_sk.append(navis.NeuronList(skels.to_swc()))
+
+    return out_sk
             
             
 def upload_to_ceph(arr, out_file, profile=None, endpoint=None, aws_access_key=None, aws_secret_key=None, region='us-east-1'):
@@ -111,38 +130,3 @@ def upload_to_ceph(arr, out_file, profile=None, endpoint=None, aws_access_key=No
         print(f"Upload successful")
     except Exception as e:
         print(f"An error occurred during upload: {e}")
-        
-def create_chunked_dims(arr_shape, chunk_size=(1000,1000,1000)):
-    #get indexing combinations
-    dx, dy, dz = arr_shape
-    xch, ych, zch = chunk_size
-    sind_x, sind_y, sind_z = (
-        list(range(0, dx, xch)),
-        list(range(0, dy, ych)),
-        list(range(0, dz, zch))
-    )
-    eind_x, eind_y, eind_z = (
-        [x + xch for x in sind_x],
-        [x + ych for x in sind_y],
-        [x + zch for x in sind_z]
-    )
-    eind_x, eind_y, eind_z = (
-        [dx if ele > dx else ele for ele in eind_x],
-        [dy if ele > dy else ele for ele in eind_y],
-        [dz if ele > dz else ele for ele in eind_z]
-    )
-    start = list(itertools.product(sind_x, sind_y, sind_z))
-    end = list(itertools.product(eind_x, eind_y, eind_z))
-    return start,end
-        
-
-def remap_arr(in_arr, mappings, chunk_size=[1000,1000,1000]):
-    if isinstance(in_arr, numpy.ndarray):
-        out_arr = fastremap.remap(in_arr, mappings, preserve_missing_labels=True)
-        return out_arr
-    if isinstance(in_arr, ts.TensorStore):
-        start,end = create_chunked_dims(arr_shape=in_arr.shape, chunk_size=chunk_size)
-        for s, e in zip(start,end):
-            arr = in_arr[s[0]:e[0],s[1]:e[1],s[2]:e[2]].read().result()
-            out_arr = fastremap.remap(arr, mappings, preserve_missing_labels=True)
-            in_arr[s[0]:e[0],s[1]:e[1],s[2]:e[2]].write(out_arr).result()
