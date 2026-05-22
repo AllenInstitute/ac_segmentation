@@ -249,8 +249,8 @@ class ContrastAdjustWrite(BatchFilter):
 
         start = [s.start for s in slices]
         end = [s.stop for s in slices]
-        _,_,x1, y1, z1 = start
-        _,_,x2, y2, z2 = end
+        x1, y1, z1 = start[-3:]
+        x2, y2, z2 = end[-3:]
         
         input_data = batch[self.input_key].data
                
@@ -365,8 +365,8 @@ class ApplyModel(BatchFilter):
 
         start = [s.start for s in slices]
         end = [s.stop for s in slices]
-        _,_,x1, y1, z1 = start
-        _,_,x2, y2, z2 = end
+        x1, y1, z1 = start[-3:]
+        x2, y2, z2 = end[-3:]
         
         if isinstance(self.mask, np.ndarray):
             ds_start, ds_end = np.ceil(np.array(start) / self.dsfactor).astype(int), np.ceil(np.array(end) / self.dsfactor).astype(int)
@@ -421,74 +421,75 @@ class Fuse(BatchFilter):
         self.z0_adj = z0_adj
         self.flatten = flatten
         self.out_arr = out_arr
-        self.write_objects = []
-
+        self.is_5d = out_arr.ndim == 5
 
     def process(self, batch, request):
-        # Get the input data
         roi = batch.arrays[self.input_key].spec.roi
         slices = roi.to_slices()
-        _,_,xb, yb, zb = [s.start for s in slices]
-        _,_,xb_end, yb_end, zb_end = [s.stop for s in slices]
-                
+
+        # Unpack only the last 3 spatial dims regardless of total ndim
+        xb,  yb,  zb     = [s.start for s in slices[-3:]]
+        xb_end, yb_end, zb_end = [s.stop  for s in slices[-3:]]
+
         A_block = batch[self.input_key].data
-        
-        # ---- SKIP if block is all zeros ----
+
         if not np.any(A_block):
             return
-        
-        #adjust according to translation
-        out_x0 = self.x0_adj + (xb)
+
+        out_x0 = self.x0_adj + xb
         out_x1 = out_x0 + (xb_end - xb)
-        out_y0 = self.y0_adj + (yb)
+        out_y0 = self.y0_adj + yb
         out_y1 = out_y0 + (yb_end - yb)
-        out_z0 = self.z0_adj + (zb)
+        out_z0 = self.z0_adj + zb
         out_z1 = out_z0 + (zb_end - zb)
-        
+
         if self.flatten['surface_map'] is not None:
-            smap = flatten['surface_map']   
+            smap = self.flatten['surface_map']  # was wrongly using bare `flatten`
+
+            ix, iy, iz = A_block.shape[-3:]
+
             if self.flatten['axis'] == 'x':
-                #adjust out indices 
                 out_x1 += smap.max()
-                B_block = np.zeros((1,1,out_x1-out_x0,out_y1-out_y0,out_z1-out_z0))
-            
-                ix,iy,iz = A_block.shape[-3:]
+                spatial = (out_x1-out_x0, out_y1-out_y0, out_z1-out_z0)
+                B_block = np.zeros(((1,1)+spatial) if self.is_5d else spatial, dtype=A_block.dtype)
                 for y in range(iy):
                     for z in range(iz):
-                        a_row = A_block[:,:,:,y,z]
-                        x_shift = smap[y+yb,z+zb]
-                        B_block[:, :, x_shift:x_shift+ix, y, z] = a_row
-                                                                        
+                        a_row = A_block[..., :, y, z]   # [...] handles both 3D and 5D
+                        x_shift = smap[y+yb, z+zb]
+                        if self.is_5d:
+                            B_block[:, :, x_shift:x_shift+ix, y, z] = a_row
+                        else:
+                            B_block[x_shift:x_shift+ix, y, z] = a_row
 
-            if self.flatten['axis'] == 'y':
-                #adjust out indices 
+            elif self.flatten['axis'] == 'y':
                 out_y1 += smap.max()
-                B_block = np.zeros((1,1,out_x1-out_x0,out_y1-out_y0,out_z1-out_z0))
-            
-                ix,iy,iz = A_block.shape[-3:]
+                spatial = (out_x1-out_x0, out_y1-out_y0, out_z1-out_z0)
+                B_block = np.zeros(((1,1)+spatial) if self.is_5d else spatial, dtype=A_block.dtype)
                 for x in range(ix):
                     for z in range(iz):
-                        a_row = A_block[:,:,x,:,z]
-                        y_shift = smap[x+xb,z+zb]
-                        B_block[:, :, x, y_shift:y_shift+iy, z] = a_row
-                                                                      
+                        a_row = A_block[..., x, :, z]
+                        y_shift = smap[x+xb, z+zb]
+                        if self.is_5d:
+                            B_block[:, :, x, y_shift:y_shift+iy, z] = a_row
+                        else:
+                            B_block[x, y_shift:y_shift+iy, z] = a_row
 
-            if self.flatten['axis'] == 'z':
-                #adjust out indices 
+            elif self.flatten['axis'] == 'z':
                 out_z1 += smap.max()
-                B_block = np.zeros((1,1,out_x1-out_x0,out_y1-out_y0,out_z1-out_z0))
-            
-                ix,iy,iz = A_block.shape[-3:]
+                spatial = (out_x1-out_x0, out_y1-out_y0, out_z1-out_z0)
+                B_block = np.zeros(((1,1)+spatial) if self.is_5d else spatial, dtype=A_block.dtype)
                 for x in range(ix):
                     for y in range(iy):
-                        a_row = A_block[:,:,x,y,:]
-                        z_shift = smap[x+xb,y+yb]
-                        B_block[:, :, x, y, z_shift:z_shift+iz] = a_row
-                                                            
+                        a_row = A_block[..., x, y, :]
+                        z_shift = smap[x+xb, y+yb]
+                        if self.is_5d:
+                            B_block[:, :, x, y, z_shift:z_shift+iz] = a_row
+                        else:
+                            B_block[x, y, z_shift:z_shift+iz] = a_row
         else:
-            B_block = A_block 
-            
-        self.write_objects.append([[out_x0,out_x1,out_y0,out_y1,out_z0,out_z1], B_block])                                      
+            B_block = A_block
+
+        self.write_objects.append([[out_x0, out_x1, out_y0, out_y1, out_z0, out_z1], B_block])
 
     def get_write_objects(self):
         return self.write_objects
@@ -497,7 +498,6 @@ class Fuse(BatchFilter):
         self.write_objects = []
         
         
-
 class VoxelRelabel(BatchFilter):
     def __init__(self, input_key, output_key, input_arr, output_arr, skels):
         self.input_key = input_key
@@ -506,7 +506,7 @@ class VoxelRelabel(BatchFilter):
         self.in_array = input_arr
         self.write_objects = []
         self.skels = skels
-
+        self.is_5d = input_arr.ndim == 5
 
     def setup(self):
         pass
@@ -520,32 +520,28 @@ class VoxelRelabel(BatchFilter):
         roi = batch.arrays[self.input_key].spec.roi
         slices = roi.to_slices()
 
-        start = [s.start for s in slices]
-        end = [s.stop for s in slices]
-        _,_,x1, y1, z1 = start
-        _,_,x2, y2, z2 = end
-        
+        # Unpack only spatial dims from the end
+        x1, y1, z1 = [s.start for s in slices[-3:]]
+        x2, y2, z2 = [s.stop  for s in slices[-3:]]
+
         input_data = batch[self.input_key].data
-        
-        
-        
-        if len(filter_skeletons(self.skels,[x1,x2,y1,y2,z1,z2])) > 0:     
-            if np.any(input_data) == True:
-                if len(self.in_array.shape) ==5:
-                    input_data = input_data[0,0,:,:,:]
-    
+
+        if len(filter_skeletons(self.skels, [x1, x2, y1, y2, z1, z2])) > 0:
+            if np.any(input_data):
+                # Always extract the 3D spatial block the same way
+                input_data = input_data[0, 0] if self.is_5d else input_data
+
                 input_data = input_data.astype('uint64')
-                binary_arr = threshold_binarize_array(input_data, threshold=15) ####TO DO, ADD PARAMETER TO CHOOSE
-                labeled_vol, num_feat = label_binary_array(binary_arr, size_threshold=10) ####TO DO, ADD PARAMETER TO CHOOSE                       
-                output_data = relabel_volume_by_nearest_skeleton(labeled_vol=labeled_vol, skeletons=self.skels, offset=(x1, y1, z1))
-                         
-                if len(self.in_array.shape) ==5:
-                    try:
-                        self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
-                    except:
-                        pass
-                else:
-                    self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
+                binary_arr = threshold_binarize_array(input_data, threshold=15)
+                labeled_vol, num_feat = label_binary_array(binary_arr, size_threshold=10)
+                output_data = relabel_volume_by_nearest_skeleton(
+                    labeled_vol=labeled_vol, skeletons=self.skels, offset=(x1, y1, z1)
+                )
+
+                try:
+                    self.write_objects.append([[x1, x2, y1, y2, z1, z2], output_data])
+                except:
+                    pass
 
     def get_write_objects(self):
         return self.write_objects
@@ -553,7 +549,6 @@ class VoxelRelabel(BatchFilter):
     def clear_write_objects(self):
         self.write_objects = []
 
-          
 
 
 def total_volume_shape(arrs, translations):

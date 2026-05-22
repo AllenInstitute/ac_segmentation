@@ -208,18 +208,22 @@ class ContrastModule(argschema.ArgSchemaParser):
                     AWS_param.add_credentials(access_key_id=self.args['AWS_key'], secret_access_key=self.args['AWS_sec_key'])
                     kvstore_out = create_kvstore(fpath=str(out_path), store='s3', AWS_param=AWS_param)                                                
             
-            size= max(4,int((90/(2**mip))))
-            iter_size = tuple(np.array([size]*3))
-            add_margin = int(np.ceil(size/1.75))
-            batch_size = int((500/size))
-            shard_factor = int(16/(mip+1))
-            ds_factor = self.args['dsfactor']/(2**mip)
+            BASE_SIZE = 64
+            size        = max(4, BASE_SIZE >> mip)
+            iter_size   = (size,) * 3                         
+            add_margin  = size // 2                           
+            batch_size  = max(1, 500 // size)                 
+            shard_factor = max(1, 16 // (mip + 1))
+            ds_factor   = self.args['dsfactor'] / (2 ** mip)
                            
             
             input_arr = open_tensor(in_path, kvstore=kvstore_in, bytes_limit= 100_000_000, driver='zarr')
+            chunk_shape=[1, 1, 64, 64, 64]
+            if len(input_arr.shape)==3:
+                chunk_shape=[64, 64, 64]
 
             try:
-                output_arr = create_tensor(fpath=out_path, arr_shape=input_arr.shape, dtype='uint8', chunk_shape=[1, 1, 64, 64, 64], driver='zarr3', codecs={"name": "blosc", "configuration": {"cname": "lz4", "clevel": 4}}, sharded=True, kvstore=kvstore_out, shard_factor=shard_factor)
+                output_arr = create_tensor(fpath=out_path, arr_shape=input_arr.shape, dtype='uint8', chunk_shape=chunk_shape, driver='zarr3', codecs={"name": "blosc", "configuration": {"cname": "lz4", "clevel": 4}}, sharded=True, kvstore=kvstore_out, shard_factor=shard_factor)
                                         
             except:
                 output_arr = open_tensor(out_path, bytes_limit= 100_000_000, driver='zarr', kvstore=kvstore_out)  
