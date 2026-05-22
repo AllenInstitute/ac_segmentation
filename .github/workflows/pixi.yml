@@ -16,9 +16,7 @@ jobs:
       with:
         # separated by spaces
         environments: >-
-          py39-conda-scalene
           py310-conda-scalene
-          py39-conda-test
           py310-conda-test
     - run: |
         pixi run -e py310-conda-scalene pytest
