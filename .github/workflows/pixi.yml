@@ -22,4 +22,4 @@ jobs:
           py310-conda-test
     - run: |
         pixi run -e py310-conda-scalene pytest
-        pixi run -e py310-conda-test
+        pixi run -e py310-conda-test pytest
