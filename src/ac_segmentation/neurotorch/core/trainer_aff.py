@@ -12,7 +12,7 @@ import logging
 
 class Trainer(object):
     """
-    Trains a PyTorch neural network with a given input and multilabel dataset using multiple cells simultaneously
+    Trains a PyTorch neural network with a given input and multilabel dataset
     """
     def __init__(self, net, inputs_volume, labels_volume, augmentation, checkpoint_dir, checkpoint_period=1000, 
                  logger_dir=None, checkpoint=None, optimizer=None, criterion=None, 
@@ -191,18 +191,18 @@ class Trainer(object):
         true_affs = list()
         for i, edge in enumerate(edges):
             try:
-                # generate pred aff
+                # Generate pred aff
                 num_channels = preds.size(-4)
                 assert num_channels == len(edges)
                 assert i < num_channels and i >= 0
                 pred_affs.append(torch_utils.get_pair_first(preds[...,[i],:,:,:], edge))
-                # generate true aff
+                # Generate true aff
                 o1, o2 = torch_utils.get_pair(label, edge)
                 ret = (((o1 == o2) + (o1 != 0) + (o2 != 0)) == 3)
                 true_affs.append(ret.type(label.type()))      
             except:
                 raise
-        # calculate accuracy
+        # Calculate accuracy
         assert len(pred_affs) == len(true_affs)
         accuracy = 0
         for pred, target in zip(pred_affs, true_affs):
@@ -216,15 +216,15 @@ class Trainer(object):
         r = np.random.randint(4) # one of 4 orientations
         arr1 = np.rot90(arr1,r,axes=(1,2))
         arr2 = np.rot90(arr2,r,axes=(1,2))
-        if np.random.randint(2): # y flip or not y flip
+        if np.random.randint(2): # y flip
             arr1 = np.flip(arr1,1)
             arr2 = np.flip(arr2,1)
-#         if np.random.randint(2): # z flip or not z flip
+#         if np.random.randint(2): # z flip
 #             arr1 = np.flip(arr1,0)
 #             arr2 = np.flip(arr2,0)
-        # intensity perturbation 
-        contrast = 1 + (np.random.rand() - 0.5) * contrast_factor # 1+[-0.15,0.15)
-        brightness = (np.random.rand() - 0.5) * brightness_factor # [-0.15,0.15) 
+        # Intensity perturbation 
+        contrast = 1 + (np.random.rand() - 0.5) * contrast_factor 
+        brightness = (np.random.rand() - 0.5) * brightness_factor 
         arr1 = arr1 * contrast
         arr1 = arr1 + brightness*65535
         arr1 = np.clip(arr1, 0, 65535)

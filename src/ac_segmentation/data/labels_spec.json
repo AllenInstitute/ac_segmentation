@@ -1,0 +1,6 @@
+[
+    {
+        "filename": "/data/train_data/labels1.tif",
+        "bounding_box": [[0,0,0],[1024,1024,512]]
+    }
+]

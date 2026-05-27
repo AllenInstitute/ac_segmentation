@@ -51,8 +51,8 @@ class Predictor:
 
         outputs = self.getNet()(inputs)
         
-        tensor = torch.cat(outputs).data.cpu().numpy() # (B,3,128,128,128)
-        tensor = np.uint8(np.round(255/(1 + np.exp(-tensor)))) # convert to probability and to uint8 before blend
+        tensor = torch.cat(outputs).data.cpu().numpy()
+        tensor = np.uint8(np.round(255/(1 + np.exp(-tensor))))
         for ch in range(3):
             data_list = [Data(tensor[i][ch], bounding_box) for i, bounding_box in enumerate(bounding_boxes)]
             for data in data_list:
