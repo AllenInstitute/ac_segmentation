@@ -1,6 +1,3 @@
-#updated 01/28/2026
-
-# Standard library
 import os
 import io
 from io import BytesIO
@@ -16,8 +13,6 @@ import itertools
 from operator import add
 from collections import deque, defaultdict, OrderedDict, Counter
 import random
-import concurrent
-from concurrent.futures import ThreadPoolExecutor
 
 # Third-party libraries
 import numpy as np
@@ -34,7 +29,10 @@ from natsort import natsorted
 import argschema as ags
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from cloudvolume import Skeleton
+from itertools import islice
 from tqdm import tqdm
+from scipy.spatial import cKDTree
+
 
     
 
@@ -49,7 +47,7 @@ def calculate_vector(coords):
         vector*=-1    
     return vector 
     
-  
+
 def merge_continuous(a1, a2):
     """Merge two arrays of 3D points so they connect smoothly."""
     if np.allclose(a1[-1], a2[0]):
@@ -141,28 +139,6 @@ def calculate_features(ns, end_node_ids, mode="inference", num_nodes=(5, 50)):
 
 
  
-def merge_pairs_inference_og(neuro_list, pair_data, prob_thresh = None, min_collin = None):
-    if prob_thresh:
-        pair_data = [x for x in pair_data if (x[1][0] > prob_thresh)]
-        pair_data  = pd.DataFrame([list(i[0]) + list(i[1]) for i in pair_data])
-        pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(0).sort_index()
-        pair_data  = pair_data.sort_values(2, ascending=False).drop_duplicates(1).sort_index()
-    else:
-        pair_data = [x for x in pair_data]
-        pair_data  = pd.DataFrame([list(i[0]) + list(i[1]) for i in pair_data])
-        pair_data  = pair_data.sort_values(4, ascending=False).drop_duplicates(0).sort_index()
-        pair_data  = pair_data.sort_values(4, ascending=False).drop_duplicates(1).sort_index()                
-        
-    #remove duplicates that are in both pre and post columns
-    rem = []
-    for ind,row in pair_data.iterrows():
-        if row[0] in list(pair_data[1]):
-            rem.append(ind)
-    pair_data = pair_data.drop(rem)
-
-    return pair_data
-
- 
 def deduplicate(pair_data, threshold=None):
     #remove duplicates that are in both pre and post columns
     if threshold:
@@ -171,7 +147,39 @@ def deduplicate(pair_data, threshold=None):
     pair_data  = pair_data.sort_values("metric", ascending=False).drop_duplicates("id1").sort_index()
     pair_data  = pair_data.sort_values("metric", ascending=False).drop_duplicates("id2").sort_index()
 
-    return pair_data      
+    return pair_data  
+    
+    
+    
+
+def find_skel_ids(ref_skels, alt_skels):
+    ref_vertices = []
+    ref_vertex_skel_ids = []
+    for sk in ref_skels:
+        ref_vertices.append(sk.vertices[0])
+        ref_vertices.append(sk.vertices[-1])
+        ref_vertex_skel_ids.append(sk.id)
+        ref_vertex_skel_ids.append(sk.id)
+    ref_vertices = np.array(ref_vertices)
+    ref_vertex_skel_ids = np.array(ref_vertex_skel_ids)
+    tree = cKDTree(ref_vertices)
+
+    used_ref_ids = set()
+    for sk in alt_skels:
+        if len(sk.vertices) == 0:
+            continue
+        query_pts = np.array([sk.vertices[0], sk.vertices[-1]])
+        _, idxs = tree.query(query_pts, k=1)
+        candidate_ids = ref_vertex_skel_ids[idxs]
+        unique, counts = np.unique(candidate_ids, return_counts=True)
+        best_id = unique[np.argmax(counts)]
+        sk.id = int(best_id)
+        used_ref_ids.add(int(best_id))
+
+    all_ref_ids = {sk.id for sk in ref_skels}
+    unused_ref_ids = all_ref_ids - used_ref_ids
+    return alt_skels, list(unused_ref_ids)
+        
     
 def merge_pairs(neuro_list, pair_data,  prob_thresh = None, min_collin = None):
     
@@ -181,6 +189,7 @@ def merge_pairs(neuro_list, pair_data,  prob_thresh = None, min_collin = None):
     
     
     #declare lists
+    og_list = copy.deepcopy(neuro_list)
     neuro_list = copy.deepcopy(neuro_list)
     merge_num = 0
     neuro_ids = {n.id: i for i, n in enumerate(neuro_list)}
@@ -201,7 +210,6 @@ def merge_pairs(neuro_list, pair_data,  prob_thresh = None, min_collin = None):
         # skip if either neuron-node was already used
         if (id1, node1) in used_nodes or (id2, node2) in used_nodes:
             continue
-
         # retrieve neurons
         m1 = neuro_list[neuro_ids[id1]]
         m2 = neuro_list[neuro_ids[id2]]
@@ -225,20 +233,20 @@ def merge_pairs(neuro_list, pair_data,  prob_thresh = None, min_collin = None):
         merge_ids_single.append(id1)
         merge_num += 1
 
+
     for sk in neuro_list:
         if sk.id not in merge_ids_single:
             unmerge_list.append(sk)
     
     merge_list = Skeleton.simple_merge(merge_list).consolidate().components()
-
-    #reapply old id
-    for sk in merge_list:
-        sk.id = (merge_vertices[str(sk.vertices[0])])
+    merge_list, unused_ids = find_skel_ids(og_list, merge_list)
+    
 
     print(f"Pairs merged: {merge_num}")
     return merge_list, unmerge_list, merge_ids_pairs
     
-
+                
+    
 def _extract_endpoints_batch(neuron_batch, min_nodes):
     """
     neuron_batch: list of (neuron_index, neuron_object)
@@ -355,6 +363,7 @@ def _navis_to_cloudvol_batch(indexed_skels):
 
     return results
 
+
 def navis_to_cloudvol(skels,n_jobs=10,batch_size=20):
     if n_jobs is None:
         n_jobs = os.cpu_count()
@@ -461,6 +470,8 @@ def _process_pair_batch(
 
     return results
     
+
+
 
 def find_pairs_inference_parallel(
     kdt,
@@ -758,3 +769,5 @@ def prune_to_furthest_end_path(skels):
             skels[ind] = sk
             
     return skels
+    
+    

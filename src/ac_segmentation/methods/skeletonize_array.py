@@ -76,10 +76,6 @@ def skeletonize(out_arr, probability_threshold=0.2, label_size_threshold=50, sca
     return skels
 
 
-# In[3]:
-
-
-###NEW EDIT
 def kimi_to_navis(skels, tag=None):
     out_sk = navis.NeuronList(None)
     try:
@@ -94,10 +90,7 @@ def kimi_to_navis(skels, tag=None):
     return out_sk
 
 
-# In[4]:
 
-
-###Edited
 def create_chunked_dims(arr_shape, chunk_size, overlap=0):
     # Ensure chunk_size is appropriate for the arr_shape length
     if len(arr_shape) != len(chunk_size):
@@ -240,12 +233,15 @@ def TS_skeletonize_volume(seg_arr, chunk_size=[1000, 1000, 1000], cutout=None, n
             delayed(skel_chunk)(s, e) for s, e in zip(start, end)
         )
 
-
-    results = [x for x in results]
     final = []
-    for x in results:
-        if x:
-            final += x
+    new_id = 1
+    for skel_chunk in results:
+        if skel_chunk:
+            for sk in skel_chunk:
+                if len(sk.vertices)>2:
+                    sk.id = new_id  
+                    final.append(sk)
+                    new_id += 1
     return final
 
 
@@ -301,13 +297,9 @@ class SkeletonizeProbabilitiesModule(argschema.ArgSchemaParser):
             self.args["cutout"] = [int(s.replace("'", "")) for s in self.args["cutout"].split(',')]                          
             
         skels = TS_skeletonize_volume(input_arr, chunk_size=[100,100,100], n_jobs=self.args["n_jobs"], prob_thresh=self.args["probability_threshold"], label_size_threshold=self.args["label_size_threshold"], overlap=4, cutout=self.args["cutout"])      
-        skels = [x for x in skels if x is not None]
+        print("Completed skeletonization, # of skels", len(skels)) 
         
-        if len(skels) > 0 :       
-            for ind in range(len(skels)):
-                skels[ind].id = int(uuid.uuid4().int % 1e14)  
-            print("Completed skeletonization, # of skels", len(skels))              
-            
+        if len(skels) > 0 :                         
             #break branches
             skels = list(break_branches(skels).values())
                                                                                                                        
@@ -317,26 +309,26 @@ class SkeletonizeProbabilitiesModule(argschema.ArgSchemaParser):
             #remove twigs
             fused= prune_to_furthest_end_path(fused)
                    
-            for ind in range(len(fused)):
-                fused[ind].id = int(uuid.uuid4().int % 1e14)
-                if len(fused[ind].vertices) < 10:
-                     fused[ind] = None                 
-            fused = [x for x in fused if x]
+            #hash ids
+            x1,x2,y1,y2,z1,z2 = 0,0,0,0,0,0
+            if self.args["cutout"]:
+                x1,x2,y1,y2,z1,z2 = self.args["cutout"]
             
+            for ind in range(len(fused)):
+                fused[ind].id = abs(int(hash((x1,x2,y1,y2,z1,z2, ind+1))/1000))        
                                                   
             #write raw swc       
             last_2 = Path(*Path(self.args["input_path"]).parents[0].parts[-2:])
             os.makedirs(os.path.join(self.args["skeleton_output"], last_2), exist_ok=True)        
             skels_outpath = os.path.join(self.args["skeleton_output"], last_2, base)                                    
-            write_cv_skels_tar(str(skels_outpath), fused, mode='w:gz')
+            #write_cv_skels_tar(str(skels_outpath), fused, mode='w:gz')
                      
             #write h5
             if self.args["skel_h5"]: 
                 out_skels_dic = {}
                 for i in fused:     
                     out_skels_dic[i.id] = i
-                global_index = shard_and_write_skeletons(out_skels_dic , os.path.join(self.args["skeleton_output"], last_2, "skeleton_shards"), max_skeletons_per_shard=10000, n_workers=10, label=str(self.args["cutout"]))
-                
+                global_index = shard_and_write_skeletons(out_skels_dic , os.path.join(self.args["skeleton_output"], last_2, "skeleton_shards"), max_skeletons_per_shard=10000, n_workers=2, label=str(self.args["cutout"]))
             
 
 if __name__ == "__main__":
