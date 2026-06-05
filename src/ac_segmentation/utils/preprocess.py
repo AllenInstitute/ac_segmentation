@@ -14,6 +14,8 @@ def lut_preprocess_array(arr, max_int):
     
 def lut_preprocess_array_minmax(arr, min_int=None, max_int=None):
     dtype =  str(arr.dtype)
+    if np.any(np.isinf(arr)):
+        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
     arr_max = int(arr.max())
     if not max_int:
         max_int=arr_max
@@ -26,6 +28,7 @@ def lut_preprocess_array_minmax(arr, min_int=None, max_int=None):
     if 'int' not in str(arr.dtype):
         arr = arr.astype('int16')
     return lut[arr].astype(dtype)
+    
     
     
 def create_chunked_dims(arr_shape, chunk_size):
