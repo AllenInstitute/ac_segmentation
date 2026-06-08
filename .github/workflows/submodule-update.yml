@@ -19,8 +19,11 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Run action
+ 
+      ####################################
+      # Run the action against code base #
+      ####################################
+      - name: run action
         id: run_action
         uses: releasehub-com/github-action-create-pr-parent-submodule@v1
         with:
