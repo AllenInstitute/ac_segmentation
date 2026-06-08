@@ -39,7 +39,7 @@ Trained model is in `src/demos/model_files/segmentation` section.
 
 
 ***To test:***
-
+```
 python src/ac_segmentation/methods/segment_array.py \
 --input_path DIRECTORY_TO_INPUT_ZARR_VOLUME  \
 --output_path DIRECTORY_TO_OUTPUT_ZARR_VOLUME \
@@ -47,7 +47,7 @@ python src/ac_segmentation/methods/segment_array.py \
 --mask_path DIRECTORY_TO_MASK_ZARR_VOLUME \
 --dsfactor MASK_DOWNSAMPLE_FACTOR \
 --filter_max_intensity MAXIMUM_THREHSOLD_INTENSITY
-
+```
 
 **Skeletonization**
 ```
