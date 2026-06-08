@@ -50,29 +50,29 @@ python src/ac_segmentation/methods/segment_array.py \
 
 
 **Skeletonization**
-
+```
 python src/ac_segmentation/methods/skeletonize_array.py \
 --input_path DIRECTORY_TO_INPUT_ZARR_VOLUME \
 --skeleton_output DIRECTORY_TO_OUTPUT_SWC_VOLUME \
 --probability_threshold MINIMUM_PROBABILITY_VALUE \
 --label_size_threshold MINIMUM_CONNECTED_COMPONENT_VALUE
-
+```
 
 **Contrast Equalization**
-
+```
 python src/ac_segmentation/methods/equalize_array.py \
 --input_path DIRECTORY_TO_INPUT_ZARR_VOLUME  \
 --output_path DIRECTORY_TO_OUTPUT_ZARR_VOLUME \
 --mask_path DIRECTORY_TO_MASK_ZARR_VOLUME \
 --dsfactor MASK_DOWNSAMPLE_FACTOR \
-
+```
 
 **Multi-Tile Image Fusion**
-
+```
 python src/ac_segmentation/methods/fuse_volume.py \
 --in_paths PATH_TO_TILES_LIST_FILE \
 --translations PATH_TO_TRANSLATIONS_LIST_FILE \
 --output_path PATH_TO_OUTPUT_ZARR_VOLUME \
 --mip MULTISCALE_LEVEL \
 --blend AVERAGE_BLENDING_FLAG
-
+```
