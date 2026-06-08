@@ -1,8 +1,9 @@
 ### ac_segmentation
 
-This repository contains code for segmenting data from light microscopy images.
+This repository contains code for segmenting and skeletonizing data from light microscopy images. Demo notebooks can be found in src/demos/.
 
-### Code
+
+### Nested Packages
 
 **Volumetric data generation**
 
@@ -14,8 +15,12 @@ Automated segmentation of axons. This project is built on previous projects.
 Original github repositories: 
 - [Neurotorch](https://github.com/jgornet/NeuroTorch)
 - [DeepEM](https://github.com/seung-lab/DeepEM)
+- [Gunpowder](https://github.com/funkelab/gunpowder.git)
 
-**Segmentation model**
+
+### Methods
+
+**Segmentation**
 
 Code for training a neuron network model to perform axonal segmentation is in the `src/ac_segmentation/training` section of this repository. 
 
@@ -30,4 +35,44 @@ python train.py \
 ```
 ***Note***: The filepaths in the inputs' and labels' json files are examples and need to be changed.
 
-Trained model is in `demos/model_files/segmentation` section.
+Trained model is in `src/demos/model_files/segmentation` section.
+
+
+***To test:***
+
+python src/ac_segmentation/methods/segment_array.py \
+--input_path DIRECTORY_TO_INPUT_ZARR_VOLUME  \
+--output_path DIRECTORY_TO_OUTPUT_ZARR_VOLUME \
+--weights_file DIRECTORY_TO_WEIGHTS_FILE \
+--mask_path DIRECTORY_TO_MASK_ZARR_VOLUME \
+--dsfactor MASK_DOWNSAMPLE_FACTOR \
+--filter_max_intensity MAXIMUM_THREHSOLD_INTENSITY
+
+
+**Skeletonization**
+
+python src/ac_segmentation/methods/skeletonize_array.py \
+--input_path DIRECTORY_TO_INPUT_ZARR_VOLUME \
+--skeleton_output DIRECTORY_TO_OUTPUT_SWC_VOLUME \
+--probability_threshold MINIMUM_PROBABILITY_VALUE \
+--label_size_threshold MINIMUM_CONNECTED_COMPONENT_VALUE
+
+
+**Contrast Equalization**
+
+python src/ac_segmentation/methods/equalize_array.py \
+--input_path DIRECTORY_TO_INPUT_ZARR_VOLUME  \
+--output_path DIRECTORY_TO_OUTPUT_ZARR_VOLUME \
+--mask_path DIRECTORY_TO_MASK_ZARR_VOLUME \
+--dsfactor MASK_DOWNSAMPLE_FACTOR \
+
+
+**Multi-Tile Image Fusion**
+
+python src/ac_segmentation/methods/fuse_volume.py \
+--in_paths PATH_TO_TILES_LIST_FILE \
+--translations PATH_TO_TRANSLATIONS_LIST_FILE \
+--output_path PATH_TO_OUTPUT_ZARR_VOLUME \
+--mip MULTISCALE_LEVEL \
+--blend AVERAGE_BLENDING_FLAG
+
