@@ -1,17 +1,11 @@
 name: Submodule Updates
- 
-#############################
-# Start the job on all push #
-#############################
+
 on:
   push:
-    branches: [master, main, develop] 
+    branches: [master, main, develop]
   pull_request:
     branches-ignore: '**'
- 
-###############
-# Set the Job #
-###############
+
 jobs:
   build:
     name: Submodule update
@@ -21,13 +15,10 @@ jobs:
       CHECKOUT_BRANCH: 'develop_integrate'
       PR_AGAINST_BRANCH: 'develop_integrate'
       OWNER: 'AllenInstitute'
- 
+
     steps:
-      ##########################
-      # Checkout the code base #
-      ##########################
       - name: Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
  
       ####################################
       # Run the action against code base #
@@ -38,6 +29,52 @@ jobs:
         with:
           github_token: ${{ secrets.RELEASE_HUB_SECRET }}
           parent_repository: ${{ env.PARENT_REPOSITORY }}
-          checkout_branch: ${{ env.CHECKOUT_BRANCH}}
+          checkout_branch: ${{ env.CHECKOUT_BRANCH }}
           pr_against_branch: ${{ env.PR_AGAINST_BRANCH }}
           owner: ${{ env.OWNER }}
+
+      - name: Label the PR
+        uses: actions/github-script@v7
+        env:
+          PARENT_REPO: ${{ env.PARENT_REPOSITORY }}
+        with:
+          github-token: ${{ secrets.RELEASE_HUB_SECRET }}
+          script: |
+            const [owner, repo] = process.env.PARENT_REPO.split('/');
+            const branchName = process.env.GITHUB_RUN_ID;
+            let prNumber;
+
+            // Retry up to 10 times — PR creation may lag slightly behind this step
+            for (let attempt = 0; attempt < 10; attempt++) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+              });
+
+              const match = prs.find(p =>
+                p.head.ref.includes(branchName) || p.title.includes(branchName)
+              );
+
+              if (match) {
+                prNumber = match.number;
+                console.log(`Found PR #${prNumber} on attempt ${attempt + 1}`);
+                break;
+              }
+
+              console.log(`Attempt ${attempt + 1}/10: PR not found yet, retrying in 10s...`);
+              await new Promise(r => setTimeout(r, 10000));
+            }
+
+            if (!prNumber) {
+              throw new Error(`PR with run ID ${branchName} not found in ${owner}/${repo} after 10 attempts`);
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: prNumber,
+              labels: ['Create Release Environment'],
+            });
+            console.log(`Label added to PR #${prNumber}`);
