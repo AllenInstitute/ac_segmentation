@@ -84,7 +84,7 @@ pytest-mock = "*"
 test = "pytest --cov --cov-report=xml --junitxml=test-reports/test.xml"
 
 [tool.pixi.environments]
-default = { features = ["py310"], solve-group = "py310" }
+# default = { features = ["py310"], solve-group = "py310" }
 # py310-conda-scalene = { features = ["scalene", "py310", "segment"], solve-group = "py310" }
 # py310-conda-test = { features = ["py310", "test"], solve-group = "py310" }
 
