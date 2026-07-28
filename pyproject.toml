@@ -47,6 +47,8 @@ libc = "2.27"
 
 [tool.pixi.dependencies]
 gcc = "*"
+cmake = "*"
+gxx = "*"
 hdf5 = "*"
 numpy = "*"
 # numpy = ">=1.26,<2"
