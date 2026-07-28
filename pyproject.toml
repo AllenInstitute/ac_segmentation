@@ -15,6 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ac_segmentation"
+requires-python = ">3.9,<3.12"
 authors = [
     {name = "Olga Gliko"},
 ]
