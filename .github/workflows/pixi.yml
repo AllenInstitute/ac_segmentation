@@ -1,4 +1,4 @@
-name: ci
+name: pixi-ci
 on:
   workflow_dispatch:
   push:
@@ -16,8 +16,6 @@ jobs:
       with:
         # separated by spaces
         environments: >-
-          py310-conda-scalene
-          py310-conda-test
+          default
     - run: |
-        pixi run -e py310-conda-scalene pytest
-        pixi run -e py310-conda-test pytest
+        pixi run -e default pytest
