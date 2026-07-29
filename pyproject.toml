@@ -47,9 +47,9 @@ libc = "2.27"
 
 [tool.pixi.dependencies]
 gcc = "*"
+cmake = "*"
+gxx = "*"
 hdf5 = "*"
-# numpy = "*"
-# numpy = ">=1.26,<2"
 
 [tool.pixi.pypi-dependencies]
 ac_segmentation = { path = ".", editable = true }
@@ -63,13 +63,9 @@ gevent = "*"
 # version-specific python features
 [tool.pixi.feature.py39.dependencies]
 python = "3.9.*"
-# gcc = "*"
-numpy = "*"  # "==1.26.0"
 
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
-# gcc = "*"
-numpy = "*"  # "==1.26.0"
 
 # [tool.pixi.feature.scalene.dependencies]
 # scalene = "*"
@@ -97,7 +93,5 @@ conda-base = { features = ["conda-base"] }
 
 [tool.coverage.run]
 omit = ["test/*"]
-
-
 
 
