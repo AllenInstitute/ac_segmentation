@@ -2,6 +2,9 @@
 
 This repository contains code for segmenting and skeletonizing data from light microscopy images. Demo notebooks can be found in src/demos/.
 
+#### Level of Support
+We are planning on occasional updating this tool with no fixed schedule. Community involvement is encouraged through both issues and pull requests. Please make pull requests against the develop branch, as we will test changes there before merging into main.
+
 
 ### Nested Packages
 

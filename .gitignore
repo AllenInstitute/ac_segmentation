@@ -110,3 +110,8 @@ venv.bak/
 .pixi
 *.egg-info
 pixi.lock
+
+# version file used by scm_version
+_version.py
+
+
