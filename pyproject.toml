@@ -17,10 +17,13 @@ build-backend = "setuptools.build_meta"
 name = "ac_segmentation"
 requires-python = ">3.9,<3.12"
 authors = [
+    {name = "Connor Laughland"},
     {name = "Olga Gliko"},
+    {name = "Russel Torres"},
 ]
 description = "Segmentation for Axonal Connectomics"
 dynamic = ["dependencies", "version"]
+license-files = ["LICEN[CS]E*"]
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
