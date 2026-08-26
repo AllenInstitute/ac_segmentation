@@ -3,7 +3,7 @@ requires = [
     "setuptools>=42",
     "wheel",
     "scikit-build>=0.13",
-    "numpy>=1.16.0",
+    "numpy",
     "scipy>=1.1.0",
     "setuptools-scm",
     "pybind11>=2.2.3",
@@ -13,15 +13,88 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 
-
 [project]
-
 name = "ac_segmentation"
+requires-python = ">3.9,<3.12"
 authors = [
+    {name = "Connor Laughland"},
     {name = "Olga Gliko"},
+    {name = "Russel Torres"},
 ]
 description = "Segmentation for Axonal Connectomics"
-dynamic = ["version","dependencies"]
+dynamic = ["dependencies", "version"]
+license-files = ["LICEN[CS]E*"]
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-mock",
+    "pytest-cov",
+    "codecov",
+]
+
+[tool.flake8]
+ignore = ['E226', 'E126', 'E741']
+max-line-length = 79
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.system-requirements]
+linux = "4.0.0"
+libc = "2.27"
+
+[tool.pixi.dependencies]
+gcc = "*"
+cmake = "*"
+gxx = "*"
+hdf5 = "*"
+
+[tool.pixi.pypi-dependencies]
+ac_segmentation = { path = ".", editable = true }
+
+
+[tool.pixi.feature.conda-base.dependencies]
+igraph = "*"
+numpy = "*"
+gevent = "*"
+
+# version-specific python features
+[tool.pixi.feature.py39.dependencies]
+python = "3.9.*"
+
+[tool.pixi.feature.py310.dependencies]
+python = "3.10.*"
+
+# [tool.pixi.feature.scalene.dependencies]
+# scalene = "*"
+
+[tool.pixi.feature.segment.dependencies]
+# add any segment-specific conda packages here if needed
+
+[tool.pixi.feature.segment.tasks]
+segment = "python src/ac_segmentation/process/segment_array.py"
+pytest = "pytest"
+
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+pytest-cov = "*"
+pytest-mock = "*"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest --cov --cov-report=xml --junitxml=test-reports/test.xml"
+
+[tool.pixi.environments]
+conda-base = { features = ["conda-base"] }
+# default = { features = ["py310"], solve-group = "py310" }
+# py310-conda-scalene = { features = ["scalene", "py310", "segment"], solve-group = "py310" }
+# py310-conda-test = { features = ["py310", "test"], solve-group = "py310" }
+
+[tool.coverage.run]
+omit = ["test/*"]
+
+

@@ -15,38 +15,6 @@ import tifffile as tif
 import os
 
 
-def create_EmptyTensor(filepath, shape, dtype = 'uint16', fill_value = -np.inf, chunk_shape = [64, 64, 64]):
-    out_arr = ts.open({
-     'driver': 'zarr',
-     'kvstore': 'file://' + str(filepath),
-     },
-     dtype=dtype,
-     fill_value=fill_value,
-     chunk_layout=ts.ChunkLayout(chunk_shape=chunk_shape),
-     create=True,
-     shape=list(shape)).result()
-    
-    return out_arr
-
-def open_ZarrTensor(filepath, bytes_limit= 100_000_000):
-    #Load tensorstore array
-    dataset_future = ts.open({
-         'driver':
-             'zarr',
-         'kvstore':
-             'file://' + str(filepath),
-     # Use 100MB in-memory cache.
-         'context': {
-             'cache_pool': {
-                 'total_bytes_limit': bytes_limit
-             }
-         },
-         'recheck_cached_data':
-         'open',
-     })
-
-    return dataset_future.result()
-
 
 class Data:
     """
@@ -221,9 +189,9 @@ given data.
         edge2 = data_edge2 - array_edge1
 
         x1, y1, z1 = edge1.getComponents()
-        x2, y2, z2 = edge2.getComponents()
+        x2, y2, z2 = (min(s, c) for s, c in zip(self.array.shape[::-1], edge2.getComponents()))
 
-        self.array[z1:z2, y1:y2, x1:x2] = data_array
+        self.array[z1:z2, y1:y2, x1:x2] = data_array[:z2 - z1, :y2 - y1, :x2 - x1]
 
     def blend(self, data: Data):
         """
@@ -292,36 +260,41 @@ origin
         if displacement is not None:
             self.bounding_box = self.bounding_box + displacement
 
-    def setIteration(self, iteration_size: BoundingBox, stride: Vector):
+    def setIteration(self, iteration_size, stride):
         """
+        TODO: hack -- allow reading chunks beyond bounds by implementing a real ceiling
         Sets the parameters for iterating through the dataset
 
         :param iteration_size: The size of each data sample in the volume
         :param stride: The displacement of each iteration
         """
         if not isinstance(iteration_size, BoundingBox):
-            error_string = ("iteration_size must have type BoundingBox"
-                            + " instead it has type {}")
+            error_string = (
+                "iteration_size must have type BoundingBox"
+                " instead it has type {}")
             error_string = error_string.format(type(iteration_size))
             raise ValueError(error_string)
 
         if not isinstance(stride, Vector):
             raise ValueError("stride must have type Vector")
 
-        if not iteration_size.isSubset(BoundingBox(Vector(0, 0, 0),
-                                                   self.getBoundingBox().getSize())):
+        if not iteration_size.isSubset(BoundingBox(
+                Vector(0, 0, 0),
+                self.getBoundingBox().getSize())):
             raise ValueError("iteration_size must be smaller than volume size")
 
         self.setIterationSize(iteration_size)
         self.setStride(stride)
 
         def ceil(x):
-            return int(round(x))
+            return math.ceil(x)
+            # return int(round(x))
 
-        self.element_vec = Vector(*map(lambda L, l, s: ceil((L-l)/s+1),
-                                       self.getBoundingBox().getSize().getComponents(),
-                                       self.iteration_size.getSize().getComponents(),
-                                       self.stride.getComponents()))
+        self.element_vec = Vector(*map(
+            lambda L, l, s: ceil((L- l) / s + 1),
+            self.getBoundingBox().getSize().getComponents(),
+            self.iteration_size.getSize().getComponents(),
+            self.stride.getComponents()))
 
         self.index = 0
 
@@ -372,7 +345,7 @@ class TSArray(Array):
     def __init__(self, tensor: ts.TensorStore, bounding_box: BoundingBox=None,
                  iteration_size: BoundingBox=BoundingBox(Vector(0, 0, 0),
                                                          Vector(32, 32, 32)),
-                 stride: Vector=Vector(64, 64, 64), prob_map: bool=False):
+                 stride: Vector=Vector(64, 64, 64), prob_map: bool=False, out_same: bool=False):
         """
         Initializes a volume with a bounding box and iteration parameters
 
@@ -395,6 +368,7 @@ class TSArray(Array):
         self.setIteration(iteration_size=iteration_size,
                           stride=stride)
         self.prob_map = prob_map
+        self.out_same = out_same
         
     def set(self, data):
         """Allow dropping data off of improperly shaped arrays"""
@@ -532,16 +506,22 @@ class TSArray(Array):
 
         :param data: The data packet to blend into the volume
         """
-
-        v1 = data.bounding_box.edge1 - Vector(*shift[::-1])
-        v2 = data.bounding_box.edge2 - Vector(*shift[::-1])
+        if self.out_same:
+              v1 = data.bounding_box.edge1
+              v2 = data.bounding_box.edge2
+        else:
+            v1 = data.bounding_box.edge1 - Vector(*shift[::-1])
+            v2 = data.bounding_box.edge2 - Vector(*shift[::-1])
         data_bb = BoundingBox(v1,v2)
         
         array = self.get(data_bb).getArray().result()
         data_array = data.getArray()
         
         if self.prob_map == True:
-            data_array = torch.special.expit(torch.from_numpy(data_array)).numpy()
+            #data_array = torch.special.expit(torch.from_numpy(data_array)).numpy()
+            data_array = torch.special.expit(data_array)
+        data_array = data_array.numpy()
+            
         x,y,z = array.shape
         array = np.maximum(array, data_array[:x,:y,:z])
         result = Data(array, data_bb)

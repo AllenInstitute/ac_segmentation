@@ -1,0 +1,21 @@
+name: pixi-ci
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+jobs:
+  Pixi_Environments:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: prefix-dev/setup-pixi@v0.8.1
+      with:
+        # separated by spaces
+        environments: >-
+          default
+    - run: |
+        pixi run -e default pytest

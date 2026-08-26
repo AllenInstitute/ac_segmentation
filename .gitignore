@@ -3,7 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-
 # C extensions
 *.so
 
@@ -47,6 +46,8 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+.pixi/
+
 test-reports/
 
 # Translations
@@ -106,3 +107,10 @@ venv.bak/
 .mypy_cache/
 
 **.vscode/
+# pixi environments
+.pixi
+*.egg-info
+pixi.lock
+
+# version file used by scm_version
+_version.py

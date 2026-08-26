@@ -4,8 +4,7 @@ import numpy as np
 import joblib
 from joblib import Parallel, delayed
 from ac_segmentation.neurotorch.datasets.dataset import Data
-from ac_segmentation.preprocess import lut_preprocess_array
-from skimage import exposure
+from ac_segmentation.utils.preprocess import lut_preprocess_array
 
 import ac_segmentation.neurotorch.datasets.dataset
 from ac_segmentation.neurotorch.datasets.datatypes import BoundingBox, Vector
@@ -61,20 +60,25 @@ class Predictor:
 
                     if hasattr(input_volume, 'rescale_perc'):
                         p1, p2 = np.percentile(batch[ind].array, input_volume.rescale_perc)
-                        batch[ind].array = exposure.rescale_intensity(batch[ind].array, in_range=(p1, p2))
+                        scale = 1.0 / (p2 - p1) if p2 > p1 else 1.0  
+                        batch[ind].array = (np.clip((batch[ind].array - p1) * scale, 0, 1).astype(str(batch[ind].array.dtype))*255).astype('int16')
+   
+                    else:
+                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
 
                     if hasattr(input_volume, 'mask'):
                         batch[ind].array = np.where(masks[ind].array, batch[ind].array, 0)
                         
                     if np.any(data.array) == True:
-                        batch[ind].array = lut_preprocess_array(batch[ind].array, max_pix)
                         keep.append(batch[ind])
 
                 if isinstance(input_volume, TSArray):
-                    self.run_batch(keep, output_volume, input_volume.shift, mini_batch_size=mini_batch_size)
+                    if keep:
+                        self.run_batch(keep, output_volume, input_volume.shift, mini_batch_size=mini_batch_size)
 
                 else:
-                    self.run_batch(keep, output_volume, mini_batch_size=mini_batch_size)
+                    if keep:
+                        self.run_batch(keep, output_volume, mini_batch_size=mini_batch_size)
 
     def getBatchSize(self):
         return self.batch_size
@@ -110,7 +114,7 @@ class Predictor:
                 output_volume.blend(data)
 
     def toArray(self, data):
-        torch_data = data.getArray().astype(float)
+        torch_data = data.getArray()#.astype(float)
         torch_data = torch_data.reshape(1, 1, *torch_data.shape)
         return torch_data
 
@@ -123,7 +127,7 @@ class Predictor:
         return bounding_boxes, arrays
 
     def toData(self, tensor_list, bounding_boxes):
-        tensor = torch.cat(tensor_list).data.cpu().numpy()
+        tensor = torch.cat(tensor_list)#.data.cpu().numpy()
         batch = [Data(tensor[i][0], bounding_box)
                  for i, bounding_box in enumerate(bounding_boxes)]
 
