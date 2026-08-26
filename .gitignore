@@ -37,6 +37,7 @@ pip-delete-this-directory.txt
 
 # Unit test / coverage reports
 htmlcov/
+.tox/
 .coverage
 .coverage.*
 .cache
@@ -46,8 +47,8 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 .pixi/
-pixi.lock
 
+test-reports/
 
 # Translations
 *.mo
@@ -113,5 +114,3 @@ pixi.lock
 
 # version file used by scm_version
 _version.py
-
-
