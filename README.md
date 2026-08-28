@@ -1,3 +1,4 @@
+[![DOI](https://zenodo.org/badge/627040364.svg)](https://doi.org/10.5281/zenodo.22151010)
 ### ac_segmentation
 
 This repository contains code for segmenting and skeletonizing data from light microscopy images. Demo notebooks can be found in src/demos/.
