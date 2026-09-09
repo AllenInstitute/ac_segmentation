@@ -53,6 +53,7 @@ gcc = "*"
 cmake = "*"
 gxx = "*"
 hdf5 = "*"
+h5py = "*"
 
 [tool.pixi.pypi-dependencies]
 ac_segmentation = { path = ".", editable = true }
@@ -69,6 +70,25 @@ python = "3.9.*"
 
 [tool.pixi.feature.py310.dependencies]
 python = "3.10.*"
+
+
+[tool.pixi.feature.docs.dependencies]
+# python = "3.12.*"
+mkdocs = ">=1.6"
+mkdocs-material = ">=9.6"
+mkdocstrings = ">=0.29"
+mkdocstrings-python = ">=1.16"
+mkdocs-gen-files = ">=0.5"
+mkdocs-literate-nav = "*"
+mkdocs-section-index = "*"
+
+# [tool.pixi.feature.docs.pypi-dependencies]
+# ac_segmentation = { path = ".", editable = true }
+
+[tool.pixi.feature.docs.tasks]
+serve = "mkdocs serve"
+build = "mkdocs build --strict"
+
 
 # [tool.pixi.feature.scalene.dependencies]
 # scalene = "*"
@@ -90,6 +110,7 @@ test = "pytest --cov --cov-report=xml --junitxml=test-reports/test.xml"
 
 [tool.pixi.environments]
 conda-base = { features = ["conda-base"] }
+docs = { features = ["conda-base", "docs"], no-default-feature = false }
 # default = { features = ["py310"], solve-group = "py310" }
 # py310-conda-scalene = { features = ["scalene", "py310", "segment"], solve-group = "py310" }
 # py310-conda-test = { features = ["py310", "test"], solve-group = "py310" }
