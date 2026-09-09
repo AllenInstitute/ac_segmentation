@@ -34,8 +34,6 @@ from tqdm import tqdm
 from scipy.spatial import cKDTree
 
 
-    
-
 def calculate_vector(coords):
     # TODO replace svd w/ eigh
     _, _, vv = np.linalg.svd(coords - coords.mean(axis=0))
@@ -44,9 +42,9 @@ def calculate_vector(coords):
     # Fix wrong orientation (sign) of vector
     vect_diff = (coords[-1,:] - coords[0,:])/np.linalg.norm(coords[-1,:] - coords[0,:])
     if np.dot(-vector, vect_diff) > np.dot(vector, vect_diff):
-        vector*=-1    
-    return vector 
-    
+        vector*=-1
+    return vector
+
 
 def merge_continuous(a1, a2):
     """Merge two arrays of 3D points so they connect smoothly."""
@@ -54,16 +52,16 @@ def merge_continuous(a1, a2):
         # a1 end connects to a2 start
         return np.vstack((a1, a2[1:]))
     elif np.allclose(a1[-1], a2[-1]):
-        # a1 end connects to a2 end — flip a2
+        # a1 end connects to a2 end flip a2
         return np.vstack((a1, np.flipud(a2[:-1])))
     elif np.allclose(a1[0], a2[-1]):
-        # a1 start connects to a2 end — prepend a2
+        # a1 start connects to a2 end prepend a2
         return np.vstack((a2, a1[1:]))
     elif np.allclose(a1[0], a2[0]):
-        # a1 start connects to a2 start — flip a2 then prepend
+        # a1 start connects to a2 start  flip a2 then prepend
         return np.vstack((np.flipud(a2), a1[1:]))
     else:
-        # No connection — just stack with a gap
+        # No connection just stack with a gap
         return np.vstack((a1, a2))
 
 
@@ -92,11 +90,8 @@ def end_nodes_pre(skel):
     ends_arr = np.array([paths[0][0], paths[0][-1]])
     nodes = [np.where((skel.vertices == row).all(axis=1))[0][0] for row in ends_arr]
     return nodes
-    
-    
-    
-def calculate_features(ns, end_node_ids, mode="inference", num_nodes=(5, 50)):
 
+def calculate_features(ns, end_node_ids, mode="inference", num_nodes=(5, 50)):
     if mode == "inference":
         alt_end_node_ids = np.copy(end_node_ids)
         end_coords = np.vstack([
@@ -106,15 +101,15 @@ def calculate_features(ns, end_node_ids, mode="inference", num_nodes=(5, 50)):
         cvect = end_coords[1] - end_coords[0]
         cvect_norm = np.linalg.norm(cvect)
         cvect /= cvect_norm
-    
+
         cf = []
         for num in num_nodes:
             for i, (n, end_node_id) in enumerate(zip(ns, end_node_ids)):
                 neighbor_loc_arr, nodes = closest_points(n, end_node_id, num)
-    
+
                 vec = calculate_vector(neighbor_loc_arr)
                 cf.append(np.dot(vec, cvect))
-                
+
         return np.array([cvect_norm] + cf)
 
 
@@ -124,13 +119,12 @@ def calculate_features(ns, end_node_ids, mode="inference", num_nodes=(5, 50)):
         else:
             num = num_nodes
 
-        
         cf = []
         vecs = []
         for i, (n, end_node_id) in enumerate(zip(ns, end_node_ids)):
             neighbor_loc_arr, nodes = closest_points(n,end_node_id, num)
-            vecs.append(calculate_vector(neighbor_loc_arr)) 
-        
+            vecs.append(calculate_vector(neighbor_loc_arr))
+
         cf = -np.dot(vecs[0], vecs[1])
         return cf
 
@@ -138,19 +132,16 @@ def calculate_features(ns, end_node_ids, mode="inference", num_nodes=(5, 50)):
         raise ValueError("mode must be 'inference' or 'dist'")
 
 
- 
 def deduplicate(pair_data, threshold=None):
-    #remove duplicates that are in both pre and post columns
+    # remove duplicates that are in both pre and post columns
     if threshold:
         pair_data = [x for x in pair_data if (x[4] > threshold)]
     pair_data  = pd.DataFrame([list(x) for x in pair_data], columns=["id1", "node1", "id2", "node2", "metric"])
     pair_data  = pair_data.sort_values("metric", ascending=False).drop_duplicates("id1").sort_index()
     pair_data  = pair_data.sort_values("metric", ascending=False).drop_duplicates("id2").sort_index()
 
-    return pair_data  
-    
-    
-    
+    return pair_data
+
 
 def find_skel_ids(ref_skels, alt_skels):
     ref_vertices = []
@@ -179,15 +170,12 @@ def find_skel_ids(ref_skels, alt_skels):
     all_ref_ids = {sk.id for sk in ref_skels}
     unused_ref_ids = all_ref_ids - used_ref_ids
     return alt_skels, list(unused_ref_ids)
-        
-    
+
+
 def merge_pairs(neuro_list, pair_data,  prob_thresh = None, min_collin = None):
-    
-    
     #remove duplicates that are in both pre and post columns
     pair_data = deduplicate(pair_data)
-    
-    
+
     #declare lists
     og_list = copy.deepcopy(neuro_list)
     neuro_list = copy.deepcopy(neuro_list)
@@ -203,10 +191,9 @@ def merge_pairs(neuro_list, pair_data,  prob_thresh = None, min_collin = None):
     #keep track of vertices
     merge_vertices = {}
 
-    
     for _, row in pair_data.iterrows():
-        id1, node1, id2, node2 = int(row[0]), int(row[1]), int(row[2]), int(row[3])      
-        
+        id1, node1, id2, node2 = int(row[0]), int(row[1]), int(row[2]), int(row[3])
+
         # skip if either neuron-node was already used
         if (id1, node1) in used_nodes or (id2, node2) in used_nodes:
             continue
@@ -215,7 +202,7 @@ def merge_pairs(neuro_list, pair_data,  prob_thresh = None, min_collin = None):
         m2 = neuro_list[neuro_ids[id2]]
 
         merge_vertices[str(m1.vertices[0])] = id1
-        merge_vertices[str(m2.vertices[0])] = id2 
+        merge_vertices[str(m2.vertices[0])] = id2
 
         # --- identical merge logic ---
         end = m2.vertices[node2]
@@ -237,16 +224,14 @@ def merge_pairs(neuro_list, pair_data,  prob_thresh = None, min_collin = None):
     for sk in neuro_list:
         if sk.id not in merge_ids_single:
             unmerge_list.append(sk)
-    
+
     merge_list = Skeleton.simple_merge(merge_list).consolidate().components()
     merge_list, unused_ids = find_skel_ids(og_list, merge_list)
-    
 
     print(f"Pairs merged: {merge_num}")
     return merge_list, unmerge_list, merge_ids_pairs
-    
-                
-    
+
+
 def _extract_endpoints_batch(neuron_batch, min_nodes):
     """
     neuron_batch: list of (neuron_index, neuron_object)
@@ -256,7 +241,6 @@ def _extract_endpoints_batch(neuron_batch, min_nodes):
     for idx, sk in neuron_batch:
         if len(sk.branches()) != 0:
             continue
-            
         if min_nodes:
             if len(sk.vertices) < min_nodes:
                 continue
@@ -316,7 +300,6 @@ def extract_endpoints_parallel(neuro_list, n_jobs=10, batch_size=50, min_nodes=N
         np.asarray(endpts_neuron_idx),
     )
 
-    
 
 def _navis_to_cloudvol_batch(indexed_skels):
     """
@@ -410,7 +393,6 @@ def _process_pair_batch(
 ):
     subfeat = {}  # shared across the batch
     results = []
-    
 
     for ind, pq in enumerate(pair_batch):
         p, q = tuple(pq)
@@ -469,8 +451,6 @@ def _process_pair_batch(
             endpts_neuron_id[q], endpts_node_id[q], prob])
 
     return results
-    
-
 
 
 def find_pairs_inference_parallel(
@@ -493,7 +473,6 @@ def find_pairs_inference_parallel(
     pair_features = []
 
     pair_batches = list(chunked(pairs, batch_size))
-    
     print("Pair Batches: ", len(pair_batches))
 
     with ProcessPoolExecutor(max_workers=n_jobs) as ex:
@@ -531,14 +510,12 @@ def find_pairs_dist(kdt, neuro_list, pairs, endpts_neuron_id, endpts_node_id, en
         f = tuple()
         p, q = pq
 
-        candidate_neuron_idxs = endpts_neuron_idx[[p, q]] 
+        candidate_neuron_idxs = endpts_neuron_idx[[p, q]]
         candidate_neurons = []
         for idx in candidate_neuron_idxs:
             candidate_neurons.append(neuro_list[idx])
-        
         candidate_end_node_ids = endpts_node_id[[p, q]]
         cf = calculate_features(candidate_neurons, candidate_end_node_ids, mode="dist")
-            
         if cf and cf > min_collin:
             pair_features.append([endpts_neuron_id[p],endpts_node_id[p], endpts_neuron_id[q], endpts_node_id[q], cf])
 
@@ -600,7 +577,6 @@ def find_pairs(
             min_collin=min_collin
         )
     else:
-    
         pairs =  find_pairs_dist(
             kdt,
             neuro_list,
@@ -614,8 +590,6 @@ def find_pairs(
             min_collin=min_collin,
             min_nodes=min_nodes,
         )
-    
-    
     dtype = np.dtype([
     ("id1", np.int64),
     ("count1", np.int32),
@@ -630,13 +604,12 @@ def find_pairs(
 def break_branches(skeletons, min_nodes=0):
     """
     Break skeletons at branches.
-    
     skeletons: list or dict of Skeleton objects (must have .vertices, .edges, .components(), .remove_disconnected_vertices())
     min_nodes: minimum number of vertices for a fragment to be kept
     """
-    if isinstance(skeletons, list):        
+    if isinstance(skeletons, list):
         skeletons = {item.id: item for item in skeletons}
-    
+
     max_id = max(skeletons.keys())
     new_skels = {}
     split_num = 0
@@ -705,7 +678,8 @@ def cloudvol_to_navis(skels):
     except:
         out_sk.append(navis.NeuronList(skels.to_swc()))
     return out_sk
-    
+
+
 def prune_to_furthest_end_path(skels):
     """
     Prune skeleton to the shortest path between the two terminal nodes
@@ -723,7 +697,6 @@ def prune_to_furthest_end_path(skels):
     pruned_edges : list of (int, int)
         Edge list of the backbone path
     """
-    
     for ind,sk in enumerate(skels):
         if len(sk.branches()) > 0:
             # Build graph
@@ -732,22 +705,22 @@ def prune_to_furthest_end_path(skels):
             G.add_edges_from(edges)
             if G.number_of_nodes() == 0:
                 return []
-        
+
             # Node coordinates
             coords = {i: np.array(v) for i, v in enumerate(sk.vertices)}
-        
+
             # Remove loops: build forest via spanning trees
             forest = nx.Graph()
             for component in nx.connected_components(G):
                 subgraph = G.subgraph(component)
                 mst = nx.minimum_spanning_tree(subgraph)
                 forest.add_edges_from(mst.edges)
-        
+
             # Terminal nodes (degree 1)
             leaves = [n for n in forest.nodes if forest.degree[n] == 1]
             if len(leaves) < 2:
                 return edges  # nothing to prune
-        
+
             # Find two leaves furthest apart (Euclidean)
             max_dist = -1
             end_a, end_b = leaves[0], leaves[1]
@@ -757,17 +730,16 @@ def prune_to_furthest_end_path(skels):
                     if d > max_dist:
                         max_dist = d
                         end_a, end_b = u, v
-        
+
             # Shortest path between furthest ends (on loop-free graph)
             backbone_path = nx.shortest_path(forest, end_a, end_b)
-        
+
             # Keep only edges on this path
             keep = set(backbone_path)
             pruned_edges = [(a, b) for a, b in edges if a in keep and b in keep]
             sk.edges = np.array(pruned_edges)
             sk = sk.remove_disconnected_vertices()
             skels[ind] = sk
-            
+
     return skels
-    
-    
+
