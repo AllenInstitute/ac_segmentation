@@ -1,0 +1,19 @@
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "latest"
+
+  jobs:
+    create_environment:
+      - asdf plugin add pixi
+      - asdf install pixi latest
+      - asdf global pixi latest
+
+    install:
+      - pixi install -e docs
+
+    build:
+      html:
+        - NO_COLOR=1 pixi run -e docs mkdocs build --strict --site-dir $READTHEDOCS_OUTPUT/html
