@@ -15,7 +15,6 @@ nav:
   - Installation: installation.md
 
   - User Guide:
-      - Overview: guide/index.md
       - Basic Usage: guide/basic-usage.md
       - Examples: guide/examples.md
 
