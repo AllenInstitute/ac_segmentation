@@ -15,7 +15,6 @@ nav:
   - Installation: installation.md
 
   - User Guide:
-      - Overview: guide/index.md
       - Basic Usage: guide/basic-usage.md
       - Examples: guide/examples.md
 
@@ -36,6 +35,10 @@ plugins:
   - literate-nav:
       nav_file: SUMMARY.md
       implicit_index: true
+      
+  - exclude:
+      glob:
+        - src/ac_segmentation/deprecated/
 
   # - section-index
 
@@ -92,4 +95,4 @@ markdown_extensions:
   - pymdownx.superfences
 
 watch:
-  - src/ac_segmentation
+  - src/ac_segmentation/
