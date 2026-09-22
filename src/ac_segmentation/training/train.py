@@ -20,6 +20,26 @@ EPS_DEFAULT = 1e-1
 EPOCHS = 1
 
 def train(ckpt, ckpt_dir, log_dir, json_dir, eps, epochs, augmentation):
+    """Build training/validation volumes from JSON dataset specs and train an RSUNet model, optionally resuming from a checkpoint.
+
+    Loads paired 'inputs'/'labels' JSON specs from `json_dir`, builds pooled input/label
+    volumes for each pair while holding out a small validation split, initializes an
+    RSUNet model with an Adam optimizer, and runs training via `Trainer`, writing
+    checkpoints and logs to per-experiment subdirectories.
+
+    Args:
+        ckpt (str): Path to a checkpoint file to resume training from, or the string 'None' to train from scratch.
+        ckpt_dir (str): Subdirectory name used (with other run settings) to build the experiment's checkpoint directory.
+        log_dir (str): Base directory for training logs; a per-experiment subdirectory is created inside it.
+        json_dir (str): Directory containing paired 'inputs'/'labels' JSON dataset specification files.
+        eps (float): Epsilon parameter passed to the Adam optimizer.
+        epochs (int): Maximum number of training epochs to run.
+        augmentation (bool | int): Whether to apply data augmentation during training.
+
+    Example:
+        >>> train(ckpt='None', ckpt_dir='run1', log_dir='logs', json_dir='data',
+        ...       eps=1e-1, epochs=1, augmentation=0)  # doctest: +SKIP
+    """
     inputs_list = [f for f in os.listdir(json_dir) if 'inputs' in f]
     inputs_list.sort()
     labels_list = [f for f in os.listdir(json_dir) if 'labels' in f]
@@ -102,6 +122,18 @@ def train(ckpt, ckpt_dir, log_dir, json_dir, eps, epochs, augmentation):
 
 def create_volume(volume_spec, stack_size=33, iteration_size=BoundingBox(Vector(0, 0, 0), Vector(128, 128, 128)),
                   stride=Vector(16, 16, 16)):
+    """Build a PooledVolume from a list of dataset spec entries, wrapping each entry's TIFF file and bounding box into a TiffVolume added to the pool.
+
+    Args:
+        volume_spec (list[dict]): Dataset spec entries, each with 'filename' and 'bounding_box' ([min_corner, max_corner]) keys.
+        stack_size (int): Number of volumes to keep pooled/prefetched at once.
+        iteration_size (BoundingBox): Size of the sub-volume window used when iterating over each TiffVolume.
+        stride (Vector): Step size between successive iteration windows.
+
+    Example:
+        >>> spec = [{"filename": "raw1.tif", "bounding_box": [[0, 0, 0], [128, 128, 128]]}]
+        >>> pooled = create_volume(spec)  # doctest: +SKIP
+    """
     pooled_volume = PooledVolume(stack_size=stack_size, iteration_size=iteration_size, stride=stride)
     for item in volume_spec:
         filename = os.path.abspath(item["filename"])

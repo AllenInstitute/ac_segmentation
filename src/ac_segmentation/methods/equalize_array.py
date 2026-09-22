@@ -20,6 +20,29 @@ from ac_segmentation.gunpowder.nodes.scan import Scan
 
 
 def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch_size=3, cutout=None, mask_file=None, preprocess={'method':'percentile','values':[96,97]}, dsfactor=1, add_margin=0, depth=.7):
+    """Percentile- or range-normalize an input volume in overlapping blocks and write the perimeter-blended result to an output tensorstore array.
+
+    Builds a gunpowder pipeline that scans the input volume in overlapping blocks,
+    normalizes each block's contrast, blends it with any existing output data along its
+    perimeter to avoid seams, and writes the combined result to `output_arr`.
+
+    Args:
+        input_arr (tensorstore.TensorStore): Input volume to contrast-adjust.
+        output_arr (tensorstore.TensorStore): Output tensorstore array where adjusted blocks are written.
+        iter_size (tuple[int, int, int]): Spatial size of each scan block before batching.
+        batch_size (int): Number of blocks per gunpowder scan chunk.
+        cutout (Sequence[int] | None): Optional (x1, x2, y1, y2, z1, z2) bounding box restricting which blocks are processed.
+        mask_file (str | None): Optional path to a mask tensorstore array used to skip already-adjusted regions.
+        preprocess (dict): Contrast preprocessing config with keys 'method' ('range' or 'percentile') and 'values'.
+        dsfactor (int): Downsample factor used to map block coordinates into the mask's coordinate space.
+        add_margin (int): Number of voxels of context margin added around each read/write block.
+        depth (float): Blend depth passed to `perimeter_weighted_blend` when merging with existing output data.
+
+    Example:
+        >>> input_arr = open_tensor('s3://bucket/raw.zarr')  # doctest: +SKIP
+        >>> output_arr = create_tensor('s3://bucket/adjusted.zarr', arr_shape=input_arr.shape, dtype='uint8')  # doctest: +SKIP
+        >>> adjust_contrast_gunpowder(input_arr, output_arr, preprocess={'method': 'percentile', 'values': [5, 99.5]})  # doctest: +SKIP
+    """
 
     mask=None
     if mask_file:
@@ -152,6 +175,20 @@ def adjust_contrast_gunpowder(input_arr, output_arr, iter_size=(64,64,64), batch
 
                                                                                 
 class ContrastParameters(argschema.ArgSchema):
+    """Argschema parameter schema defining the input/output paths, cutout, downsample factor, masking, and S3 access options for the contrast-adjustment run.
+
+    Args:
+        input_path (str): Base path (local or s3://) to the input volume; a mip-level subdirectory is appended for each run.
+        output_path (str): Base path (local or s3://) where the contrast-adjusted output volume is written.
+        cutout (Any | None): Optional bounding box (as a comma-separated string or list) restricting processing to a sub-region.
+        dsfactor (float): Base downsample factor used to map block coordinates into the mask's coordinate space, scaled per mip level.
+        mask_path (str | None): Optional path to a mask tensorstore array used to skip already-adjusted regions.
+        AWS_key (str | None): AWS access key ID used to authenticate S3 access.
+        AWS_sec_key (str | None): AWS secret access key paired with AWS_key.
+        region (str): AWS region used for S3 access.
+        endpoint (str | None): Custom S3-compatible endpoint URL.
+        profile (str | None): Named AWS credentials profile to use for S3 access.
+    """
     input_path = argschema.fields.String(required=True)
     output_path = argschema.fields.String(required=True)
     cutout = argschema.fields.Raw(required=False, allow_none=True, missing=None)
@@ -166,10 +203,33 @@ class ContrastParameters(argschema.ArgSchema):
     
 
 class ContrastModule(argschema.ArgSchemaParser):
+    """Argschema module that loads an input volume at each mip level, contrast-adjusts it via `adjust_contrast_gunpowder` with mip-scaled block and margin sizes, and writes the result to an output tensorstore array.
+
+    Args:
+        None: This class carries no constructor args beyond argschema's ArgSchemaParser.
+    """
     default_schema = ContrastParameters
        
 
     def run(self):
+        """Parse run parameters and contrast-adjust the input volume at each mip level 0-4.
+
+        Converts "None" string args to actual None, parses `cutout` from a string into a
+        list if needed, then for each mip level opens the input tensorstore array (from a
+        local path or S3), computes mip-scaled block size, margin, batch size, and shard
+        factor, creates or opens the output tensorstore array, and runs
+        `adjust_contrast_gunpowder` to produce the contrast-adjusted volume.
+
+        Args:
+            self (ContrastModule): Instance whose self.args holds the run configuration.
+
+        Example:
+            >>> mod = ContrastModule(input_data={  # doctest: +SKIP
+            ...     "input_path": "s3://bucket/raw",
+            ...     "output_path": "s3://bucket/adjusted",
+            ... }, args=[])
+            >>> mod.run()  # doctest: +SKIP
+        """
         for key, value in self.args.items():
             if value == 'None':
                 self.args[key] = None
