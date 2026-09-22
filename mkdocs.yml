@@ -1,6 +1,17 @@
 site_name: AC_Segmentation
 site_description: Documentation for Axonal Connectomics Segmentation
 
+
+extra:
+  api_reference:
+    source_dir: src
+    output_dir: reference
+    excluded_modules:
+      - ac_segmentation.deprecated
+    excluded_paths:
+      - "**/notebooks/**"
+    skip_private_modules: true
+
 theme:
   name: material
   features:
