@@ -44,18 +44,6 @@ from ac_segmentation.gunpowder.nodes.batch_filter import BatchFilter
 logger = logging.getLogger(__name__)
 
 class TensorStoreSource(ZarrSource):
-    """Gunpowder BatchProvider that reads array blocks directly from in-memory TensorStore datasets instead of a Zarr store on disk.
-
-    Args:
-        tensorstore (dict[ArrayKey, tensorstore.TensorStore] | None): Mapping of gunpowder array keys to the TensorStore datasets they should read from.
-        array_specs (dict[ArrayKey, ArraySpec] | None): Optional per-key ArraySpec overrides (e.g. voxel size, interpolatable).
-        channels_first (bool): Whether the underlying array's leading dimensions are channel dimensions rather than trailing.
-        add_margin (int | None): Number of voxels of extra context to read around each requested ROI.
-
-    Example:
-        >>> raw = ArrayKey('RAW')  # doctest: +SKIP
-        >>> source = TensorStoreSource({raw: input_arr}, {raw: ArraySpec(interpolatable=True)})  # doctest: +SKIP
-    """
 
     def __init__(self, tensorstore=None, array_specs=None, channels_first=True, add_margin=None):
         if array_specs is None:
@@ -69,11 +57,6 @@ class TensorStoreSource(ZarrSource):
         self.shape = next(iter(self.tensorstore.values())).shape
 
     def _get_offset(self, dataset):
-        """Look up the physical offset stored in a dataset's attributes, reversing axis order if the store uses N5-style metadata.
-
-        Args:
-            dataset: TensorStore/Zarr dataset whose 'offset' attribute is read.
-        """
         if "offset" not in dataset.attrs:
             return None
 
@@ -83,32 +66,16 @@ class TensorStoreSource(ZarrSource):
             return Coordinate(dataset.attrs["offset"])
 
     def _rev_metadata(self):
-        """Determine whether this source's underlying Zarr store uses N5 (reversed-axis) metadata.
-
-        Args:
-            self (TensorStoreSource): Instance whose `self.store` chunk store is inspected.
-        """
         with ZarrFile(self.store, mode="a") as store:
             return isinstance(store.chunk_store, N5Store) or isinstance(store.chunk_store, N5FSStore)
 
     def setup(self):
-        """Register each configured TensorStore array as a provided output of this source.
-
-        Args:
-            self (TensorStoreSource): Instance whose `self.tensorstore` mapping is iterated.
-        """
         for array_key, tensorstore in self.tensorstore.items():
             spec = self.__read_spec(array_key, tensorstore)
             self.provides(array_key, spec, tensorstore)
 
     def provides(self, key, spec, tensorstore):
-        """Register a new array key as an output provided by this source, storing its spec.
-
-        Args:
-            key (ArrayKey): Gunpowder array key being registered.
-            spec (ArraySpec): Spec describing the provided array (ROI, voxel size, dtype, etc.).
-            tensorstore (tensorstore.TensorStore): TensorStore dataset backing this key, used only for logging its path.
-        """
+        """Introduce a new output provided by this :class:`BatchProvider`."""
         name = 'TensorStoreSource[' + str(tensorstore.kvstore.path) + ']'
         logger.debug("Current spec of %s:\\n%s", name, self.spec)
 
@@ -124,12 +91,6 @@ class TensorStoreSource(ZarrSource):
 
 
     def __read_spec(self, array_key, tensorstore):
-        """Build (or fill in defaults for) the ArraySpec for a given array key based on its TensorStore dataset's shape and dtype.
-
-        Args:
-            array_key (ArrayKey): Gunpowder array key whose spec is being constructed.
-            tensorstore (tensorstore.TensorStore): TensorStore dataset used to infer shape, dtype, and default voxel size/ROI.
-        """
         dataset = tensorstore
 
         if array_key in self.array_specs:
@@ -183,21 +144,10 @@ class TensorStoreSource(ZarrSource):
         return spec
 
     def name(self):
-        """Return a human-readable name for this source based on the first TensorStore dataset's path.
-
-        Args:
-            self (TensorStoreSource): Instance whose `self.tensorstore` values are inspected.
-        """
         return 'TensorStoreSource[' + list(self.tensorstore.values())[0].kvstore.path + ']'
 
 
     def __read(self, data_file, roi):
-        """Read a sub-array from a TensorStore dataset for the given ROI, optionally padding by `add_margin` and transposing channel axes.
-
-        Args:
-            data_file (tensorstore.TensorStore): Dataset to read from.
-            roi (Roi): Region of interest, in voxel units, to read.
-        """
         c = len(data_file.shape) - self.ndims
 
         slices = roi.to_slices()
@@ -223,11 +173,6 @@ class TensorStoreSource(ZarrSource):
 
 
     def provide(self, request):
-        """Fulfill a gunpowder batch request by reading the requested ROI from each configured TensorStore array and packaging the results into a Batch.
-
-        Args:
-            request (BatchRequest): Request specifying which array keys and ROIs to read.
-        """
         timing = Timing(self)
         timing.start()
 
@@ -269,23 +214,6 @@ class TensorStoreSource(ZarrSource):
         
         
 class ContrastAdjustWrite(BatchFilter):
-    """Gunpowder BatchFilter that percentile-normalizes each incoming block, optionally skips masked blocks, and buffers the results for later assembly into an output tensorstore array.
-
-    Args:
-        input_key (ArrayKey): Gunpowder key of the array to read contrast-adjusted data from.
-        output_key (ArrayKey): Gunpowder key requested downstream that this filter is responsible for producing.
-        input_arr (tensorstore.TensorStore): Source tensorstore array (used to check dimensionality).
-        output_arr (tensorstore.TensorStore): Destination tensorstore array the adjusted blocks will eventually be written to.
-        int_range (Sequence[float] | None): Percentile range used for contrast normalization.
-        version (str): Normalization mode identifier, kept for interface parity.
-        mask (np.ndarray | None): Optional downsampled mask array; blocks fully inside the mask are skipped.
-        dsfactor (int): Downsample factor used to map block coordinates into the mask's coordinate space.
-        add_margin (int | None): Number of voxels of extra context to include around each block's write region.
-        depth (float): Unused blending depth parameter retained for interface compatibility (overwritten to 0.6 internally).
-
-    Example:
-        >>> contrast = ContrastAdjustWrite(raw, raw, input_arr, output_arr, int_range=[5, 99.5], version='percentile')  # doctest: +SKIP
-    """
     def __init__(self, input_key, output_key, input_arr, output_arr, int_range=None, version='range', mask=None, dsfactor=1, add_margin=None, depth=.9):
         self.input_key = input_key
         self.output_key = output_key
@@ -300,30 +228,14 @@ class ContrastAdjustWrite(BatchFilter):
         self.depth=.6
 
     def setup(self):
-        """No-op setup hook required by the BatchFilter interface.
-
-        Args:
-            self (ContrastAdjustWrite): Filter instance.
-        """
         pass
 
     def prepare(self, request):
-        """Declare that this filter depends on reading `input_key` for the requested `output_key` ROI.
-
-        Args:
-            request (BatchRequest): Downstream request specifying the ROI needed for `output_key`.
-        """
         deps = BatchRequest()
         deps[self.input_key] = request[self.output_key].copy()
         return deps
 
     def process(self, batch, request):
-        """Percentile-normalize the input block to 0-255, skip it if fully masked, and append it to the list of pending write objects.
-
-        Args:
-            batch (Batch): Batch containing the input array data and its ROI.
-            request (BatchRequest): Original batch request (unused directly beyond triggering processing).
-        """
         roi = batch.arrays[self.input_key].spec.roi
         slices = roi.to_slices()
         if self.add_margin:
@@ -374,35 +286,14 @@ class ContrastAdjustWrite(BatchFilter):
                 self.write_objects.append([[x1,x2,y1,y2,z1,z2], output_data])
 
     def get_write_objects(self):
-        """Return the list of buffered (bounding box, array) writes accumulated by `process`.
-
-        Args:
-            self (ContrastAdjustWrite): Filter instance.
-        """
         return self.write_objects
 
     def clear_write_objects(self):
-        """Discard all buffered write objects, freeing memory before the next batch.
-
-        Args:
-            self (ContrastAdjustWrite): Filter instance.
-        """
         self.write_objects = []
 
 
 
 class ContrastAdjust(BatchFilter):
-    """Gunpowder BatchFilter that applies a min-max or percentile contrast adjustment to a block and returns the result as a new batch, without buffering writes.
-
-    Args:
-        input_key (ArrayKey): Gunpowder key of the array to read raw data from.
-        output_key (ArrayKey): Gunpowder key the adjusted output will be stored under.
-        int_range (Sequence[float] | None): Intensity or percentile range used for normalization.
-        version (str): Normalization mode, 'range' for min-max rescaling or 'percentile' for percentile-based rescaling.
-
-    Example:
-        >>> contrast = ContrastAdjust(raw, adjusted, int_range=[0, 20000], version='range')  # doctest: +SKIP
-    """
     def __init__(self, input_key, output_key, int_range=None, version='range'):
         self.input_key = input_key
         self.output_key = output_key
@@ -410,31 +301,15 @@ class ContrastAdjust(BatchFilter):
         self.version = version
 
     def setup(self):
-        """No-op setup hook required by the BatchFilter interface.
-
-        Args:
-            self (ContrastAdjust): Filter instance.
-        """
         pass
 
     def prepare(self, request):
-        """Declare that this filter depends on reading `input_key` for the requested `output_key` ROI.
-
-        Args:
-            request (BatchRequest): Downstream request specifying the ROI needed for `output_key`.
-        """
         # Ensure the input array is requested
         deps = BatchRequest()
         deps[self.input_key] = request[self.output_key].copy()
         return deps
 
     def process(self, batch, request):
-        """Apply min-max or percentile contrast rescaling to the input block and return it as a new batch under `output_key`.
-
-        Args:
-            batch (Batch): Batch containing the input array data to adjust.
-            request (BatchRequest): Downstream request specifying the ROI for `output_key`.
-        """
         # Get the input data
         input_data = batch[self.input_key].data
 
@@ -465,20 +340,6 @@ class ContrastAdjust(BatchFilter):
 
 
 class ApplyModel(BatchFilter):
-    """Gunpowder BatchFilter that runs a trained segmentation model on each incoming block and buffers the resulting probability maps for later assembly into an output tensorstore array.
-
-    Args:
-        model (torch.nn.Module): Trained segmentation model to run on each block.
-        input_key (ArrayKey): Gunpowder key of the array to read raw data from.
-        ts_array (tensorstore.TensorStore): Output tensorstore array the model's predictions will eventually be written to.
-        device (torch.device): Device to run model inference on.
-        mask (np.ndarray | None): Optional downsampled mask array; blocks fully inside the mask are skipped.
-        dsfactor (int): Downsample factor used to map block coordinates into the mask's coordinate space.
-        add_margin (int | None): Number of voxels of extra context to include around each block's write region.
-
-    Example:
-        >>> apply_model = ApplyModel(model, raw, output_arr, device=torch.device('cuda:0'))  # doctest: +SKIP
-    """
     def __init__(self, model, input_key, ts_array, device, mask=None, dsfactor=1, add_margin=None):
         self.model = model
         self.input_key = input_key
@@ -490,12 +351,6 @@ class ApplyModel(BatchFilter):
         self.add_margin = add_margin
 
     def process(self, batch, request):
-        """Run the model on the input block (after mask/skip checks and shape trimming to a multiple of 16), convert the output logits to a probability map, and buffer it as a pending write object.
-
-        Args:
-            batch (Batch): Batch containing the input array data to run inference on.
-            request (BatchRequest): Original batch request (unused directly beyond triggering processing).
-        """
         # Get the input data
         roi = batch.arrays[self.input_key].spec.roi
         slices = roi.to_slices()
@@ -551,36 +406,13 @@ class ApplyModel(BatchFilter):
 
         
     def get_write_objects(self):
-        """Return the list of buffered (bounding box, array) writes accumulated by `process`.
-
-        Args:
-            self (ApplyModel): Filter instance.
-        """
         return self.write_objects
 
     def clear_write_objects(self):
-        """Discard all buffered write objects, freeing memory before the next batch.
-
-        Args:
-            self (ApplyModel): Filter instance.
-        """
         self.write_objects = []
         
  
 class Fuse(BatchFilter):
-    """Gunpowder BatchFilter that places each incoming block into the coordinate frame of a larger fused output volume, optionally remapping voxels along a flattening surface map, and buffers the result as a pending write object.
-
-    Args:
-        input_key (ArrayKey): Gunpowder key of the array to read block data from.
-        out_arr (tensorstore.TensorStore): Output tensorstore array this block will eventually be written into.
-        x0_adj (int): X offset added to place this array's local coordinates into the fused volume.
-        y0_adj (int): Y offset added to place this array's local coordinates into the fused volume.
-        z0_adj (int): Z offset added to place this array's local coordinates into the fused volume.
-        flatten (dict): Optional surface-flattening config with keys 'surface_map' (np.ndarray | None) and 'axis' ('x', 'y', or 'z') describing how to remap voxels along a warped surface.
-
-    Example:
-        >>> fuse = Fuse(raw, out_arr, x0_adj=0, y0_adj=0, z0_adj=0, flatten={'surface_map': None, 'axis': 'x'})  # doctest: +SKIP
-    """
     def __init__(self, input_key, out_arr, x0_adj, y0_adj, z0_adj, flatten):
         self.input_key = input_key
         self.write_objects = []
@@ -592,12 +424,6 @@ class Fuse(BatchFilter):
         self.is_5d = out_arr.ndim == 5
 
     def process(self, batch, request):
-        """Translate the input block into the fused output volume's coordinate frame, remapping voxels along the configured flattening surface if provided, and buffer it as a pending write object.
-
-        Args:
-            batch (Batch): Batch containing the input array data and its ROI.
-            request (BatchRequest): Original batch request (unused directly beyond triggering processing).
-        """
         roi = batch.arrays[self.input_key].spec.roi
         slices = roi.to_slices()
 
@@ -666,35 +492,13 @@ class Fuse(BatchFilter):
         self.write_objects.append([[out_x0, out_x1, out_y0, out_y1, out_z0, out_z1], B_block])
 
     def get_write_objects(self):
-        """Return the list of buffered (bounding box, array) writes accumulated by `process`.
-
-        Args:
-            self (Fuse): Filter instance.
-        """
         return self.write_objects
 
     def clear_write_objects(self):
-        """Discard all buffered write objects, freeing memory before the next batch.
-
-        Args:
-            self (Fuse): Filter instance.
-        """
         self.write_objects = []
         
         
 class VoxelRelabel(BatchFilter):
-    """Gunpowder BatchFilter that, for blocks overlapping known skeletons, thresholds and labels connected components and relabels each one to the ID of its nearest skeleton, buffering the result for later writing.
-
-    Args:
-        input_key (ArrayKey): Gunpowder key of the array to read raw/probability data from.
-        output_key (ArrayKey): Gunpowder key requested downstream that this filter is responsible for producing.
-        input_arr (tensorstore.TensorStore): Source tensorstore array (used to check dimensionality).
-        output_arr (tensorstore.TensorStore): Destination tensorstore array the relabeled blocks will eventually be written to.
-        skels (list[cloudvolume.Skeleton]): Skeletons used to assign nearest-skeleton IDs to labeled voxels.
-
-    Example:
-        >>> relabel = VoxelRelabel(raw, raw, input_arr, output_arr, skels)  # doctest: +SKIP
-    """
     def __init__(self, input_key, output_key, input_arr, output_arr, skels):
         self.input_key = input_key
         self.output_key = output_key
@@ -705,30 +509,14 @@ class VoxelRelabel(BatchFilter):
         self.is_5d = input_arr.ndim == 5
 
     def setup(self):
-        """No-op setup hook required by the BatchFilter interface.
-
-        Args:
-            self (VoxelRelabel): Filter instance.
-        """
         pass
 
     def prepare(self, request):
-        """Declare that this filter depends on reading `input_key` for the requested `output_key` ROI.
-
-        Args:
-            request (BatchRequest): Downstream request specifying the ROI needed for `output_key`.
-        """
         deps = BatchRequest()
         deps[self.input_key] = request[self.output_key].copy()
         return deps
 
     def process(self, batch, request):
-        """For blocks that overlap any of `self.skels`, threshold and label connected components in the input block and relabel each voxel to its nearest skeleton's ID, buffering the result as a pending write object.
-
-        Args:
-            batch (Batch): Batch containing the input array data and its ROI.
-            request (BatchRequest): Original batch request (unused directly beyond triggering processing).
-        """
         roi = batch.arrays[self.input_key].spec.roi
         slices = roi.to_slices()
 
@@ -756,33 +544,14 @@ class VoxelRelabel(BatchFilter):
                     pass
 
     def get_write_objects(self):
-        """Return the list of buffered (bounding box, array) writes accumulated by `process`.
-
-        Args:
-            self (VoxelRelabel): Filter instance.
-        """
         return self.write_objects
 
     def clear_write_objects(self):
-        """Discard all buffered write objects, freeing memory before the next batch.
-
-        Args:
-            self (VoxelRelabel): Filter instance.
-        """
         self.write_objects = []
 
 
 
 def total_volume_shape(arrs, translations):
-    """Compute the shape and minimum corner of the bounding box that contains all given arrays once placed at their respective translations.
-
-    Args:
-        arrs (list[np.ndarray | tensorstore.TensorStore]): Arrays whose spatial extents are combined.
-        translations (list[tuple[int, int, int]]): (x, y, z) placement offset for each array in arrs, aligned by index.
-
-    Example:
-        >>> shape, mins = total_volume_shape([arr1, arr2], [(0, 0, 0), (100, 0, 0)])  # doctest: +SKIP
-    """
     mins = []
     maxs = []
     for A,(x,y,z) in zip(arrs, translations):
@@ -795,29 +564,10 @@ def total_volume_shape(arrs, translations):
 
 
 def no_neg(value):
-    """Clamp a value to be non-negative.
-
-    Args:
-        value (int | float): Value to clamp.
-
-    Example:
-        >>> no_neg(-5)
-        0
-    """
     return value if value >= 0 else 0
 
 
 def perimeter_weighted_blend(array1, array2, depth=.5):
-    """Blend two overlapping arrays using a perimeter-based weight mask so the second array's edges fade smoothly into the first.
-
-    Args:
-        array1 (np.ndarray): Base array (e.g. existing output data).
-        array2 (np.ndarray): New array to blend in (e.g. freshly written block).
-        depth (float): Unused directly here; retained for interface compatibility with the underlying bump-mask blending.
-
-    Example:
-        >>> blended = perimeter_weighted_blend(existing_block, new_block)  # doctest: +SKIP
-    """
     weight_map = make_mask(array1.shape[-3:], tuple(int(t*0.5) for t in array1.shape[-3:]), edge=None, bump='zung')
     return (array1 * (1 - weight_map) + array2 * (weight_map))
     
@@ -825,15 +575,6 @@ def perimeter_weighted_blend(array1, array2, depth=.5):
 ###relabel function  
     
 def label_binary_array(binary_arr, size_threshold=20):
-    """Label connected components in a binary array and drop components smaller than a size threshold.
-
-    Args:
-        binary_arr (np.ndarray): Boolean or 0/1 array whose foreground voxels will be connected-component labeled.
-        size_threshold (int): Minimum connected-component size to keep.
-
-    Example:
-        >>> labeled, num_labels = label_binary_array(binary_arr, size_threshold=10)  # doctest: +SKIP
-    """
     
     labeled_arr, num_features = cc3d.connected_components(binary_arr, connectivity=6, return_N=True)
     if num_features > 1:
@@ -843,29 +584,10 @@ def label_binary_array(binary_arr, size_threshold=20):
     return labeled_arr, len(np.unique(labeled_arr))
 
 def threshold_binarize_array(arr, threshold=0.2):
-    """Convert a probability/intensity array to a boolean mask by thresholding.
-
-    Args:
-        arr (np.ndarray): Input array of probability or intensity values.
-        threshold (float): Value at or above which a voxel is treated as foreground.
-
-    Example:
-        >>> mask = threshold_binarize_array(prob_arr, threshold=15)  # doctest: +SKIP
-    """
     return (arr >= threshold)
 
 
 def relabel_volume_by_nearest_skeleton(labeled_vol, skeletons, offset=(0, 0, 0)):
-    """Relabel each connected component in a labeled volume to the ID of the nearest skeleton vertex, restricted to components actually touched by a skeleton.
-
-    Args:
-        labeled_vol (np.ndarray): Connected-component labeled volume to relabel.
-        skeletons (list[cloudvolume.Skeleton]): Skeletons whose vertices are used as relabeling targets.
-        offset (tuple[int, int, int]): (x, y, z) offset mapping labeled_vol's local voxel coordinates into the skeletons' global coordinate space.
-
-    Example:
-        >>> relabeled = relabel_volume_by_nearest_skeleton(labeled_vol, skels, offset=(x1, y1, z1))  # doctest: +SKIP
-    """
     pts = []
     ids = []
     for sk in skeletons:
@@ -907,15 +629,6 @@ def relabel_volume_by_nearest_skeleton(labeled_vol, skeletons, offset=(0, 0, 0))
     
     
 def filter_skeletons(skels, bbox): #x1,x2,y1,y2,z1,z2
-    """Return the subset of skeletons that have at least one vertex within a given bounding box.
-
-    Args:
-        skels (list[cloudvolume.Skeleton]): Skeletons to filter.
-        bbox (tuple[int, int, int, int, int, int]): (x1, x2, y1, y2, z1, z2) bounding box in the skeletons' coordinate space.
-
-    Example:
-        >>> nearby = filter_skeletons(all_skels, [0, 100, 0, 100, 0, 100])  # doctest: +SKIP
-    """
     x1,x2,y1,y2,z1,z2 = bbox
     lower = np.array([x1, y1, z1])
     upper = np.array([x2, y2, z2])
@@ -930,14 +643,6 @@ def filter_skeletons(skels, bbox): #x1,x2,y1,y2,z1,z2
     
     
 def no_neg(value):
-    """Clamp a value to be non-negative.
-
-    Args:
-        value (int | float): Value to clamp.
-
-    Example:
-        >>> no_neg(-5)
-        0
-    """
     return value if value >= 0 else 0
+
 

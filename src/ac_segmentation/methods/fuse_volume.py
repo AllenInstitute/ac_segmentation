@@ -32,17 +32,6 @@ logger = logging.getLogger(__name__)
 
 
 def create_chunked_dims(arr_shape, chunk_size):
-    """Compute the full Cartesian product of start/end index tuples that tile an N-dimensional array shape into non-overlapping chunks.
-
-    Args:
-        arr_shape (Sequence[int]): Shape of the array to be chunked, one entry per dimension.
-        chunk_size (Sequence[int]): Chunk size along each dimension, same length as arr_shape.
-
-    Example:
-        >>> starts, ends = create_chunked_dims((200, 200, 200), (100, 100, 100))
-        >>> starts[0], ends[0]
-        ([0, 0, 0], [100, 100, 100])
-    """
     if len(arr_shape) != len(chunk_size):
         raise ValueError("arr_shape and chunk_size must have the same number of dimensions")
 
@@ -60,30 +49,6 @@ def create_chunked_dims(arr_shape, chunk_size):
 
 
 def fuse_gunpowder(arrs, translations, output_path, flatten={'surface_maps':None, 'downsample':16, 'axis':'x', 'pad':None}, dtype='float32', iter_size=(64,64,64), batch_size=10, run_exclusive=-1, cutouts=None, crop=None, blend=False):
-    """Fuse multiple overlapping tensorstore volumes into a single output volume via a gunpowder pipeline.
-
-    Translates each input array into a shared coordinate frame, optionally remaps voxels
-    along per-array flattening surface maps, crops each array's outer edges, blends
-    overlapping regions with any existing output data, and writes the combined result to
-    a newly created (or existing) output tensorstore array.
-
-    Args:
-        arrs (list[tensorstore.TensorStore]): Input volumes to fuse.
-        translations (list[tuple[int, int, int]]): (x, y, z) placement offset for each array in arrs, aligned by index.
-        output_path (str): Path where the fused output tensorstore array is created.
-        flatten (dict): Optional surface-flattening config with keys 'surface_maps' (list of per-array maps or None), 'downsample', 'axis', and 'pad'.
-        dtype (str): Data type of the fused output array.
-        iter_size (tuple[int, int, int]): Spatial size of each scan block before batching.
-        batch_size (int): Number of blocks per gunpowder scan chunk.
-        run_exclusive (int): If not -1, only the array at this index in arrs is processed.
-        cutouts (list[Sequence[int]] | None): Optional per-array (x1, x2, y1, y2, z1, z2) bounding boxes restricting which blocks are processed.
-        crop (tuple[int, int, int] | None): Optional (x, y, z) margin to crop from each array's outer edges before writing.
-        blend (bool): Whether to max-blend newly written blocks with any existing data already in the output array.
-
-    Example:
-        >>> arrs = [open_tensor('s3://bucket/tile_a.zarr'), open_tensor('s3://bucket/tile_b.zarr')]  # doctest: +SKIP
-        >>> fuse_gunpowder(arrs, translations=[(0, 0, 0), (100, 0, 0)], output_path='s3://bucket/fused.zarr')  # doctest: +SKIP
-    """
 
     torch.set_num_threads(20)
 
@@ -306,22 +271,6 @@ def fuse_gunpowder(arrs, translations, output_path, flatten={'surface_maps':None
 
 
 class FusionZarrParameters(argschema.ArgSchema):
-    """Argschema parameter schema defining the input path list, output path, translations file, mip level, and blend/crop/S3 options for the fusion run.
-
-    Args:
-        in_paths (str): Path to a text file listing input volume paths, one per line.
-        output_path (str): Base path where the fused output volume is written.
-        translations (str): Path to a JSON file listing the (x, y, z) translation for each input volume.
-        run_exclusive (int): If not -1, only the array at this index in the input list is processed.
-        mip (int): Mip level subdirectory appended to each input/output path.
-        blend (bool): Whether to max-blend newly written blocks with any existing data already in the output array.
-        crop (list[int] | None): Optional [x, y, z] margin to crop from each array's outer edges before writing.
-        AWS_key (str | None): AWS access key ID used to authenticate S3 access.
-        AWS_sec_key (str | None): AWS secret access key paired with AWS_key.
-        region (str): AWS region used for S3 access.
-        endpoint (str | None): Custom S3-compatible endpoint URL.
-        profile (str | None): Named AWS credentials profile to use for S3 access.
-    """
     in_paths = argschema.fields.String(required=True)
     output_path = argschema.fields.String(required=True)
     translations = argschema.fields.String(required=True)
@@ -339,32 +288,9 @@ class FusionZarrParameters(argschema.ArgSchema):
 
 
 class FusionZarrModule(argschema.ArgSchemaParser):
-    """Argschema module that loads a list of input volumes and their translations, fuses them via `fuse_gunpowder`, and writes the combined volume to an output tensorstore array.
-
-    Args:
-        None: This class carries no constructor args beyond argschema's ArgSchemaParser.
-    """
     default_schema = FusionZarrParameters
 
     def run(self):
-        """Read the input path list and translations file, open each input tensorstore array, and run the fusion pipeline.
-
-        Reads input paths from `in_paths` and per-array translations from the
-        `translations` JSON file, opens each input volume at the configured mip level
-        (from a local path or S3), and runs `fuse_gunpowder` to produce the fused output
-        volume.
-
-        Args:
-            self (FusionZarrModule): Instance whose self.args holds the run configuration.
-
-        Example:
-            >>> mod = FusionZarrModule(input_data={  # doctest: +SKIP
-            ...     "in_paths": "tiles.txt",
-            ...     "output_path": "s3://bucket/fused",
-            ...     "translations": "translations.json",
-            ... }, args=[])
-            >>> mod.run()  # doctest: +SKIP
-        """
         fpaths = open(self.args['in_paths'], "r").read().splitlines()
 
         with open(self.args['translations'], 'r') as file:

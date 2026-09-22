@@ -10,18 +10,12 @@ nav = mkdocs_gen_files.Nav()
 root = Path(__file__).parent.parent
 src = root / "src"
 
-EXCLUDE_DIRS = {"gunpowder", "swc_morphology", "neurotorch", "notebooks", "deprecated", "reconnect_stack_navis.py"}
-
 for path in sorted(src.rglob("*.py")):
     module_path = path.relative_to(src).with_suffix("")
     doc_path = path.relative_to(src).with_suffix(".md")
     full_doc_path = Path("reference", doc_path)
 
     parts = tuple(module_path.parts)
-    
-    
-    if EXCLUDE_DIRS & set(path.parts):
-        continue
 
     if parts[-1] == "__init__":
         # Package __init__ becomes the package index page.

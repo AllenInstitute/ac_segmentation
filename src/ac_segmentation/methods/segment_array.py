@@ -15,7 +15,6 @@ import pathlib
 import docker
 import torch
 import ast
-import time
 
 
 from ac_segmentation.gunpowder.array_spec import ArraySpec
@@ -32,32 +31,6 @@ RSUNet = ac_segmentation.neurotorch.nets.RSUNet.RSUNet
 
     
 def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), batch_size=5, cutout=None, gpu_device=None, cpus=20, preprocess={'method':'percentile','values':[96,97]}, mask_file=None, dsfactor=1, add_margin=0):
-    """Run a trained RSUNet model over an input volume in overlapping blocks and write blended probabilities to an output tensorstore array.
-
-    Builds a gunpowder pipeline that reads the input volume in blocks, contrast-adjusts
-    each block, runs it through the model on CPU/GPU, blends the resulting probability
-    maps across overlapping blocks with a bump-mask weight map, and writes the combined
-    result to `output_arr`.
-
-    Args:
-        input_arr (tensorstore.TensorStore): Input volume to segment.
-        output_arr (tensorstore.TensorStore): Output tensorstore array where blended probabilities are written.
-        checkpoint (str): Path to the trained RSUNet model weights file.
-        iter_size (tuple[int, int, int]): Spatial size of each scan block before batching.
-        batch_size (int): Number of blocks per gunpowder scan chunk.
-        cutout (Sequence[int] | None): Optional (x1, x2, y1, y2, z1, z2) bounding box restricting which blocks are processed.
-        gpu_device (int | None): CUDA device index to run inference on; None runs on CPU.
-        cpus (int): Number of CPU threads to use for torch and data loading.
-        preprocess (dict): Contrast preprocessing config with keys 'method' ('range' or 'percentile') and 'values'.
-        mask_file (str | None): Optional path to a mask tensorstore array used to skip already-segmented regions.
-        dsfactor (int): Downsample factor used to map block coordinates into the mask's coordinate space.
-        add_margin (int): Number of voxels of context margin added around each read/write block.
-
-    Example:
-        >>> input_arr = open_tensor('s3://bucket/raw.zarr')  # doctest: +SKIP
-        >>> output_arr = create_tensor('s3://bucket/probs.zarr', arr_shape=input_arr.shape, dtype='uint8')  # doctest: +SKIP
-        >>> segment_gunpowder(input_arr, output_arr, checkpoint='model.pt', gpu_device=0)  # doctest: +SKIP
-    """
     mask=None
     if mask_file:
         mask = open_tensor(fpath=mask_file).read().result()
@@ -229,24 +202,6 @@ def segment_gunpowder(input_arr, output_arr, checkpoint, iter_size=(64,64,64), b
 
 
 class SegmentZarrParameters(argschema.ArgSchema):
-    """Argschema parameter schema defining input/output paths, model weights, intensity filtering, cutout, and S3 access options for the segmentation run.
-
-    Args:
-        gpu_device (str | None): CUDA device index to run inference on; None runs on CPU.
-        input_path (str): Path (local or s3://) to the input probability/raw volume.
-        weights_file (str): Path to the trained RSUNet model weights file.
-        output_path (str): Path (local or s3://) where the output segmentation volume is written.
-        filter_max_intensity (int): Upper bound used for range-based contrast normalization when `rescale_perc` is not set.
-        rescale_perc (str | None): Optional string-encoded [low, high] percentile pair used for percentile-based contrast normalization.
-        cutout (str | None): Optional comma-separated bounding box "x1,x2,y1,y2,z1,z2" restricting processing to a sub-region.
-        dsfactor (int): Downsample factor used to map block coordinates into the mask's coordinate space.
-        mask_path (str | None): Optional path to a mask tensorstore array used to skip already-segmented regions.
-        AWS_key (str | None): AWS access key ID used to authenticate S3 access.
-        AWS_sec_key (str | None): AWS secret access key paired with AWS_key.
-        region (str): AWS region used for S3 access.
-        endpoint (str | None): Custom S3-compatible endpoint URL.
-        profile (str | None): Named AWS credentials profile to use for S3 access.
-    """
     gpu_device = argschema.fields.String(required=False, allow_none=True, default=None)
     input_path = argschema.fields.String(required=True)
     weights_file = argschema.fields.InputFile(required=True)
@@ -264,33 +219,9 @@ class SegmentZarrParameters(argschema.ArgSchema):
     profile = argschema.fields.String(required=False, default=None, allow_none=True)
     
 class SegmentZarrModule(argschema.ArgSchemaParser):
-    """Argschema module that loads an input volume and a trained RSUNet model, segments the volume via `segment_gunpowder`, and writes the result to an output tensorstore array.
-
-    Args:
-        None: This class carries no constructor args beyond argschema's ArgSchemaParser.
-    """
     default_schema = SegmentZarrParameters
 
     def run(self):
-        """Parse run parameters, open the input/output tensorstore arrays, and run the segmentation pipeline.
-
-        Converts "None" string args to actual None, opens the input volume (from a local
-        path or S3, using whichever AWS credential options were supplied), creates or
-        opens the output tensorstore array, builds the contrast-preprocessing config from
-        `rescale_perc` or `filter_max_intensity`, and runs `segment_gunpowder` to produce
-        the segmentation.
-
-        Args:
-            self (SegmentZarrModule): Instance whose self.args holds the run configuration.
-
-        Example:
-            >>> mod = SegmentZarrModule(input_data={  # doctest: +SKIP
-            ...     "input_path": "s3://bucket/raw.zarr",
-            ...     "weights_file": "model.pt",
-            ...     "output_path": "s3://bucket/probs.zarr",
-            ... }, args=[])
-            >>> mod.run()  # doctest: +SKIP
-        """
 
         #Convert all "None" strings to actual None 
         for key, value in self.args.items():

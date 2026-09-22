@@ -25,26 +25,6 @@ from ac_segmentation.gunpowder.nodes.scan import Scan
 
 
 def voxel_relabel_gunpowder(input_arr, output_arr, skel_path, iter_size=(64,64,64), batch_size=3, cutout=None):
-    """Relabel connected components in an input volume to their nearest known skeleton's ID and write the result to an output tensorstore array.
-
-    Builds a gunpowder pipeline that scans the input volume in overlapping blocks,
-    queries a skeleton store for skeletons near each block, and for blocks that
-    overlap at least one skeleton, thresholds/labels the block and relabels each
-    component to the ID of its nearest skeleton before writing it out.
-
-    Args:
-        input_arr (tensorstore.TensorStore): Input labeled/probability volume to relabel.
-        output_arr (tensorstore.TensorStore): Output tensorstore array where relabeled voxels are written.
-        skel_path (str): Path to the skeleton store queried for nearby skeletons.
-        iter_size (tuple[int, int, int]): Spatial size of each scan block before batching.
-        batch_size (int): Number of blocks per gunpowder scan chunk.
-        cutout (Sequence[int] | None): Optional (x1, x2, y1, y2, z1, z2) bounding box restricting which blocks are processed and queried.
-
-    Example:
-        >>> input_arr = open_tensor('s3://bucket/probs.zarr')  # doctest: +SKIP
-        >>> output_arr = create_tensor('s3://bucket/labels.zarr', arr_shape=input_arr.shape, dtype='uint64')  # doctest: +SKIP
-        >>> voxel_relabel_gunpowder(input_arr, output_arr, skel_path='s3://bucket/skeletons')  # doctest: +SKIP
-    """
 
     is_5d = input_arr.ndim == 5
 
@@ -169,17 +149,6 @@ def voxel_relabel_gunpowder(input_arr, output_arr, skel_path, iter_size=(64,64,6
 
                                                                                 
 class VoxelRelabelParameters(argschema.ArgSchema):
-    """Argschema parameter schema defining the input/output paths, skeleton store path, cutout, and S3 access options for the voxel relabeling run.
-
-    Args:
-        input_path (str): Path (local or s3://) to the input labeled/probability volume.
-        skel_path (str): Path to the skeleton store queried for nearby skeletons.
-        output_path (str): Path (local or s3://) where the relabeled output volume is written.
-        cutout (Any | None): Optional bounding box (as a comma-separated string or list) restricting processing to a sub-region.
-        region (str): AWS region used for S3 access.
-        endpoint (str | None): Custom S3-compatible endpoint URL.
-        profile (str | None): Named AWS credentials profile to use for S3 access.
-    """
     input_path = argschema.fields.String(required=True)
     skel_path = argschema.fields.String(required=True)
     output_path = argschema.fields.String(required=True)
@@ -191,33 +160,10 @@ class VoxelRelabelParameters(argschema.ArgSchema):
     
 
 class VoxelRelabelModule(argschema.ArgSchemaParser):
-    """Argschema module that loads an input labeled volume, relabels it against a skeleton store via `voxel_relabel_gunpowder`, and writes the result to an output tensorstore array.
-
-    Args:
-        None: This class carries no constructor args beyond argschema's ArgSchemaParser.
-    """
     default_schema = VoxelRelabelParameters
        
 
     def run(self):
-        """Parse run parameters, open the input/output tensorstore arrays, and run the voxel-relabeling pipeline.
-
-        Converts "None" string args to actual None, parses `cutout` from a string into a
-        list if needed, opens the input volume (from a local path or S3), creates or
-        opens the output tensorstore array, and runs `voxel_relabel_gunpowder` to produce
-        the relabeled volume.
-
-        Args:
-            self (VoxelRelabelModule): Instance whose self.args holds the run configuration.
-
-        Example:
-            >>> mod = VoxelRelabelModule(input_data={  # doctest: +SKIP
-            ...     "input_path": "s3://bucket/probs.zarr",
-            ...     "skel_path": "s3://bucket/skeletons",
-            ...     "output_path": "s3://bucket/labels.zarr",
-            ... }, args=[])
-            >>> mod.run()  # doctest: +SKIP
-        """
         for key, value in self.args.items():
             if value == 'None':
                 self.args[key] = None

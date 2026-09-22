@@ -33,12 +33,7 @@ from ac_segmentation.utils.h5_reconnect import *
 
 
 def label_binary_array(binary_arr, size_threshold=20):
-    """Label connected components in a binary array and drop components smaller than a size threshold.
-
-    Args:
-        binary_arr (np.ndarray): Boolean or 0/1 array whose foreground voxels will be connected-component labeled.
-        size_threshold (int): Minimum connected-component size to keep.
-    """
+    
     labeled_arr, num_features = cc3d.connected_components(binary_arr, connectivity=6, return_N=True)
     if num_features > 1:
         labeled_arr = skimage.morphology.remove_small_objects(
@@ -47,29 +42,10 @@ def label_binary_array(binary_arr, size_threshold=20):
     return labeled_arr, len(np.unique(labeled_arr))
 
 def threshold_binarize_array(arr, threshold=0.2):
-    """Convert a probability/intensity array to a boolean mask by thresholding.
-
-    Args:
-        arr (np.ndarray): Input array of probability or intensity values.
-        threshold (float): Value at or above which a voxel is treated as foreground.
-    """
     return (arr >= threshold)
 
 def skeletonize(out_arr, probability_threshold=0.2, label_size_threshold=50, scale=10, constant=10, 
                 fill_holes=False, parallel=1, dust_threshold=10, max_paths=None):
-    """Binarize, label, and skeletonize a probability volume with kimimaro's TEASAR algorithm.
-
-    Args:
-        out_arr (np.ndarray): Input probability or intensity volume to skeletonize.
-        probability_threshold (float): Threshold used to binarize out_arr before labeling.
-        label_size_threshold (int): Minimum connected-component size to keep when labeling.
-        scale (float): TEASAR "scale" parameter controlling skeleton invalidation distance.
-        constant (float): TEASAR "const" parameter influencing allowed finger branches.
-        fill_holes (bool): Whether to fill holes in the labeled volume before skeletonizing.
-        parallel (int): Number of parallel processes to use (<=0 all CPUs, 1 single-process, 2+ multiprocess).
-        dust_threshold (int): Connected components with fewer voxels than this are skipped.
-        max_paths (int | None): Maximum number of TEASAR paths to extract per object.
-    """
     # binarize volume, label, and skeletonize
     binary_arr = threshold_binarize_array(out_arr, threshold=probability_threshold)
     labeled_arr, num_feat = label_binary_array(binary_arr, size_threshold=label_size_threshold)
@@ -101,12 +77,6 @@ def skeletonize(out_arr, probability_threshold=0.2, label_size_threshold=50, sca
 
 
 def kimi_to_navis(skels, tag=None):
-    """Convert kimimaro/cloudvolume skeletons to a navis NeuronList via their SWC representation.
-
-    Args:
-        skels (iterable[cloudvolume.Skeleton]): Skeletons to convert, e.g. values of the dict returned by skeletonize.
-        tag (str | None): If provided, assigned as the .name attribute of every resulting neuron.
-    """
     out_sk = navis.NeuronList(None)
     try:
         for sk in skels:
@@ -122,13 +92,6 @@ def kimi_to_navis(skels, tag=None):
 
 
 def create_chunked_dims(arr_shape, chunk_size, overlap=0):
-    """Compute overlapping start/end index bounds for tiling a 3D array into fixed-size chunks.
-
-    Args:
-        arr_shape (Sequence[int]): Shape of the array to be chunked; last three dims are used as (x, y, z).
-        chunk_size (Sequence[int]): Target chunk size along (x, y, z), same length as arr_shape.
-        overlap (int): Number of voxels each chunk's bounds are expanded by on every side.
-    """
     # Ensure chunk_size is appropriate for the arr_shape length
     if len(arr_shape) != len(chunk_size):
         raise ValueError("arr_shape and chunk_size must have the same number of dimensions")
@@ -156,11 +119,11 @@ def create_chunked_dims(arr_shape, chunk_size, overlap=0):
 
 
 def break_branches(skeletons, min_nodes=4):
-    """Split each skeleton at its branch points into separate single-path fragments.
-
-    Args:
-        skeletons (list[cloudvolume.Skeleton] | dict[int, cloudvolume.Skeleton]): Skeletons to split at branch points.
-        min_nodes (int): Minimum number of vertices a split-off fragment must have to be kept.
+    """
+    Break skeletons at branches.
+    
+    skeletons: list or dict of Skeleton objects (must have .vertices, .edges, .components(), .remove_disconnected_vertices())
+    min_nodes: minimum number of vertices for a fragment to be kept
     """
     if isinstance(skeletons, list):        
         skeletons = {item.id: item for item in skeletons}
@@ -227,24 +190,7 @@ def break_branches(skeletons, min_nodes=4):
 
 
 def TS_skeletonize_volume(seg_arr, chunk_size=[1000, 1000, 1000], cutout=None, n_jobs=4, prob_thresh=0.2, label_size_threshold=20, overlap=4):
-    """Skeletonize a large volume by tiling it into overlapping chunks and processing them in parallel.
-
-    Args:
-        seg_arr (np.ndarray): Segmentation/probability volume to skeletonize.
-        chunk_size (list[int]): Chunk size along (x, y, z) used to tile seg_arr.
-        cutout (Sequence[int] | None): Optional (x1, x2, y1, y2, z1, z2) bounding box restricting processing.
-        n_jobs (int): Number of parallel worker processes used to skeletonize chunks.
-        prob_thresh (float): Probability threshold forwarded to skeletonize for binarizing each chunk.
-        label_size_threshold (int): Minimum connected-component size forwarded to skeletonize.
-        overlap (int): Number of voxels of overlap between adjacent chunks.
-    """
     def skel_chunk(start, end):
-        """Skeletonize one sub-volume chunk and shift its vertex coordinates into the volume's global frame.
-
-        Args:
-            start (tuple[int, int, int]): (x, y, z) start indices of this chunk within seg_arr.
-            end (tuple[int, int, int]): (x, y, z) end indices of this chunk within seg_arr.
-        """
         arr = seg_arr[start[0]:end[0], start[1]:end[1], start[2]:end[2]]
         skels = skeletonize(
             np.array(arr),
@@ -302,23 +248,6 @@ def TS_skeletonize_volume(seg_arr, chunk_size=[1000, 1000, 1000], cutout=None, n
 
 
 class SkeletonizeProbabilitiesParameters(argschema.ArgSchema):
-    """Argschema parameter schema defining inputs, thresholds, S3 credentials, and output options for the skeletonization run.
-
-    Args:
-        input_path (str): Path (local or s3://) to the input probability/segmentation array.
-        skeleton_output (str): Directory where output skeleton files will be written.
-        probability_threshold (float): Probability threshold used when binarizing the input volume.
-        label_size_threshold (int): Minimum connected-component size to keep during labeling.
-        n_jobs (int): Number of parallel worker processes used for chunked skeletonization.
-        cutout (str | None): Optional comma-separated bounding box "x1,x2,y1,y2,z1,z2" restricting processing.
-        output_json (str | None): Optional path to an output JSON file for run metadata.
-        skel_h5 (bool): Whether to write the final skeletons out as sharded HDF5 files.
-        AWS_key (str | None): AWS access key ID used to authenticate S3 access.
-        AWS_sec_key (str | None): AWS secret access key paired with AWS_key.
-        region (str): AWS region used for S3 access.
-        endpoint (str | None): Custom S3-compatible endpoint URL.
-        profile (str | None): Named AWS credentials profile to use for S3 access.
-    """
     input_path = argschema.fields.String(required=True)
     skeleton_output = argschema.fields.String(required=True)
     probability_threshold = argschema.fields.Float(
@@ -336,19 +265,9 @@ class SkeletonizeProbabilitiesParameters(argschema.ArgSchema):
     profile = argschema.fields.String(required=False, default=None, allow_none=True)
     
 class SkeletonizeProbabilitiesModule(argschema.ArgSchemaParser):
-    """Argschema module that loads a probability volume, skeletonizes it, and writes the resulting skeletons to disk.
-
-    Args:
-        None: This class carries no constructor args beyond argschema's ArgSchemaParser.
-    """
     default_schema = SkeletonizeProbabilitiesParameters
 
     def run(self):
-        """Load the input volume, skeletonize it in parallel chunks, post-process the skeletons, and write them to disk.
-
-        Args:
-            self (SkeletonizeProbabilitiesModule): Instance whose self.args holds the run configuration.
-        """
     
         #Convert all "None" strings to actual None 
         for key, value in self.args.items():
